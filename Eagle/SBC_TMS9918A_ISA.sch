@@ -15348,14 +15348,14 @@ Source: &lt;a href="http://www.conrad.de/ce/de/product/736880"&gt; Conrad &lt;/a
 <variantdefs>
 </variantdefs>
 <classes>
-<class number="0" name="default" width="0.1524" drill="0.2">
-<clearance class="0" value="0.1524"/>
+<class number="0" name="default" width="0.381" drill="0.2">
+<clearance class="0" value="0.254"/>
 </class>
 <class number="1" name="power" width="0.508" drill="0.6604">
 <clearance class="0" value="0.254"/>
 <clearance class="1" value="0.254"/>
 </class>
-<class number="2" name="data" width="0.254" drill="0.6604">
+<class number="2" name="data" width="0.381" drill="0.6604">
 <clearance class="0" value="0.254"/>
 <clearance class="1" value="0.254"/>
 <clearance class="2" value="0.254"/>
@@ -16481,13 +16481,6 @@ Source: &lt;a href="http://www.conrad.de/ce/de/product/736880"&gt; Conrad &lt;/a
 <label x="-114.3" y="154.94" size="1.778" layer="95"/>
 </segment>
 </net>
-<net name="!CS" class="0">
-<segment>
-<pinref part="IC4" gate="C" pin="O"/>
-<wire x1="-68.58" y1="152.4" x2="-50.8" y2="152.4" width="0.1524" layer="91"/>
-<label x="-55.88" y="152.4" size="1.778" layer="95"/>
-</segment>
-</net>
 <net name="!RAS" class="0">
 <segment>
 <pinref part="IC3" gate="G$1" pin="!RAS"/>
@@ -16804,6 +16797,11 @@ Source: &lt;a href="http://www.conrad.de/ce/de/product/736880"&gt; Conrad &lt;/a
 <pinref part="IC4" gate="B" pin="I0"/>
 <wire x1="-17.78" y1="193.04" x2="-33.02" y2="193.04" width="0.1524" layer="91"/>
 <label x="-33.02" y="193.04" size="1.778" layer="95"/>
+</segment>
+<segment>
+<pinref part="IC4" gate="C" pin="O"/>
+<wire x1="-68.58" y1="152.4" x2="-50.8" y2="152.4" width="0.1524" layer="91"/>
+<label x="-55.88" y="152.4" size="1.778" layer="95"/>
 </segment>
 </net>
 <net name="!CSR" class="0">
