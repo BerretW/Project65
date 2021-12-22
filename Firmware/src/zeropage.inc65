@@ -1,0 +1,4 @@
+				.globalzp _posx
+				.globalzp _posy
+				.globalzp _in_char
+				.globalzp __INPUT, __OUTPUT, BANK_BASE

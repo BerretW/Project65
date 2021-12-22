@@ -1,0 +1,15 @@
+extern void __fastcall__ vdp_init();
+extern void __fastcall__ vdp_set_bgc(char color);
+extern void __fastcall__ vdp_set_fnc(char color);
+extern void __fastcall__ VDP_print_char(char c);
+extern void __fastcall__ vdp_screen_mode0();
+extern void __fastcall__ vdp_screen_mode1();
+extern void __fastcall__ vdp_screen_mode2();
+extern void __fastcall__ vdp_screen_mode3();
+extern void __fastcall__ vdp_init_mode(char mode);
+extern void __fastcall__ vdp_fill_vram(char data);
+extern void __fastcall__ vdp_fill(char data);
+extern void __fastcall__ vdp_reg0_val();
+extern void __fastcall__ vdp_reg1_val();
+extern void __fastcall__ vdp_puts(const char * s);
+extern void vdp_print_nl(const char * s);

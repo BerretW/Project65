@@ -1,0 +1,13 @@
+extern void echo_test();
+extern void via_test();
+extern void restart();
+extern void start_ram();
+extern void write_to_RAM();
+extern void init_vec();
+extern void print_byte(char c);
+extern void play_song();
+extern void irq_init();
+extern void nmi_init();
+extern char input_scan();
+extern char get_input();
+extern char GET_INT();
