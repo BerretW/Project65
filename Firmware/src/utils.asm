@@ -131,7 +131,8 @@ _echo_test:
 
 
 
-_start_ram:         PLA
+_start_ram:         LDX #$FF        ; reset HW stack – ramtest nema vlastni LDX/TXS
+                    TXS
                     JMP (RAMDISK_RESET_VECTOR)
 
 _via_test:	LDA #$FF
@@ -166,7 +167,7 @@ _write_to_RAM:
                 STX ptr1 + 1
                 CPX #>(RAMDISK_END+1)
                 BNE @end
-                JMP (RAMDISK_RESET_VECTOR)
+                RTS             ; vrat se do bootloaderu; uzivatel spusti 's'
 @end:			      JMP @write
 
 

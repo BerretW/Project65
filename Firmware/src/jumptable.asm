@@ -19,9 +19,9 @@
 .segment "JMPTBL"
 
 
-_RST:	JMP	_main		;$FF1E	Restart to bootloader
-_INTEN:	JMP	_INTE		;$FF33	Enable Interrupts
-_INTDI:	JMP	_INTD		;$FF36	Disable Interrupts
+_RST:	JMP	_main		;$FF00	Restart to bootloader
+_INTEN:	JMP	_INTE		;$FF03	Enable Interrupts
+_INTDI:	JMP	_INTD		;$FF06	Disable Interrupts
 
 .segment "CODE"
 ; ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@
 #include "jumptable.h"
 #include "ewoz.h"
 #include "acia.h"
+#include "ihex.h"
 
 /* Prazdne handlery - NMI/IRQ pouzity jen pro interni ucely cc65 runtime */
 void IRQ_Event(void) {}
@@ -24,8 +25,10 @@ void NMI_Event(void) {}
 
 void main(void) {
     char c;
+    unsigned char ihex_result;
     const char *banner = "P65 Minimal Bootloader";
     const char *m_w    = "  w - zapis binarniho programu do RAM ($6000)";
+    const char *m_h    = "  h - nahrat Intel HEX do RAM (libovolna adresa)";
     const char *m_m    = "  m - EWOZ / WozMon monitor";
     const char *m_s    = "  s - spustit program z $6000";
 
@@ -37,6 +40,7 @@ void main(void) {
 
     acia_print_nl(banner);
     acia_print_nl(m_w);
+    acia_print_nl(m_h);
     acia_print_nl(m_m);
     acia_print_nl(m_s);
 
@@ -53,6 +57,18 @@ void main(void) {
                 acia_print_nl("Cekam na binarni data pro zapis do RAM...");
                 acia_print_nl("(odeslej presne 8192 bajtu, posledni 2B na offsetu $1FFC = start adresa)");
                 write_to_RAM();
+                acia_print_nl("Zapis hotov - stiskni 's' pro spusteni");
+                break;
+
+            case 'h':
+                acia_print_nl("Cekam na Intel HEX (ESC = zrusit)...");
+                ihex_result = ihex_load();
+                if (ihex_result == 0)
+                    acia_print_nl("OK - stiskni 's' pro spusteni z $6000");
+                else if (ihex_result == 0xFF)
+                    acia_print_nl("Preruseno.");
+                else
+                    acia_print_nl("Varovani: chyby checksumu - data mozna poskozena");
                 break;
 
             case 's':

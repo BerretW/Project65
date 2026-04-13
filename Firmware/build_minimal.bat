@@ -66,6 +66,9 @@ if errorlevel 1 ( echo CHYBA: ca65 interrupts.asm & cd .. & exit /b 1 )
 ca65 --cpu 65c02 zeropage.asm   -o ..\output\zeropage.o
 if errorlevel 1 ( echo CHYBA: ca65 zeropage.asm & cd .. & exit /b 1 )
 
+ca65 --cpu 65c02 ihex.asm       -o ..\output\ihex.o        -l ..\lst\ihex.lst
+if errorlevel 1 ( echo CHYBA: ca65 ihex.asm & cd .. & exit /b 1 )
+
 REM Presun vygenerovane .s soubory do output
 move /Y *.s ..\output  1>nul
 
@@ -88,6 +91,7 @@ ld65 -C ..\config\MIN_ROM.cfg ^
      interrupts.o ^
      zeropage.o ^
      stubs_min.o ^
+     ihex.o ^
      %CC65_LIB% ^
      -o MIN_ROM.bin
 if errorlevel 1 ( echo CHYBA: ld65 linker & cd .. & exit /b 1 )
