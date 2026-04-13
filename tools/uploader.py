@@ -2,11 +2,12 @@
 """
 P65 SBC Uploader
 ----------------
-GUI nástroj pro nahrávání binárních programů do P65 BigBoard
+GUI nástroj pro nahrávání programů do P65 BigBoard
 přes sériový port (ACIA R6551, 19200 Bd, 8N1).
 
 Protokol bootloaderu:
   w  – nahrání raw binary (přesně 8192 B → $6000–$7FFF), po nahrání auto-start
+  h  – nahrání Intel HEX (libovolná adresa), firmware odpoví '.' / 'X' per záznam
   s  – skok na $6000 (spuštění naposledy nahraného programu)
   m  – EWOZ / WozMon monitor
   ^R – soft restart bootloaderu
@@ -24,7 +25,7 @@ import time
 import queue
 
 BAUD_RATE   = 19200
-UPLOAD_SIZE = 8192      # bootloader čeká přesně 8192 B
+UPLOAD_SIZE = 8192      # raw binary – bootloader čeká přesně 8192 B
 CHUNK_SIZE  = 128       # bajtů na jeden zápis do portu
 
 
@@ -36,6 +37,7 @@ class P65Uploader:
         self.running = False
         self.rx_queue: queue.Queue = queue.Queue()
         self._upload_in_progress = False
+        self._upload_total = UPLOAD_SIZE   # aktualizuje se před přenosem
 
         root.title("P65 SBC Uploader")
         root.resizable(False, False)
@@ -43,7 +45,7 @@ class P65Uploader:
 
         self._build_ui()
         self._refresh_ports()
-        self._poll_rx()         # pravidelné čtení z fronty do terminálu
+        self._poll_rx()
 
     # -----------------------------------------------------------------------
     # UI
@@ -86,10 +88,10 @@ class P65Uploader:
                              state="readonly")
         ent_file.grid(row=0, column=0, **PAD)
 
-        ttk.Button(frm_file, text="Vybrat .bin…",
+        ttk.Button(frm_file, text="Vybrat soubor…",
                    command=self._pick_file).grid(row=0, column=1, **PAD)
 
-        self.btn_upload = ttk.Button(frm_file, text="⬆  Nahrát (w)",
+        self.btn_upload = ttk.Button(frm_file, text="⬆  Nahrát",
                                      command=self._upload, state="disabled")
         self.btn_upload.grid(row=0, column=2, **PAD)
 
@@ -106,9 +108,9 @@ class P65Uploader:
         frm_cmd.grid(row=2, column=0, columnspan=2, sticky="ew", **PAD)
 
         cmds = [
-            ("▶  Start ($6000)",  self._cmd_start,   "green"),
-            ("M  WozMon",         self._cmd_monitor,  None),
-            ("^R Restart",        self._cmd_reset,    "red"),
+            ("▶  Start ($6000)",  self._cmd_start,    "green"),
+            ("M  WozMon",         self._cmd_monitor,   None),
+            ("^R Restart",        self._cmd_reset,     "red"),
         ]
         for col, (label, cmd, fg) in enumerate(cmds):
             btn = ttk.Button(frm_cmd, text=label, command=cmd, width=18)
@@ -146,7 +148,6 @@ class P65Uploader:
         ttk.Button(frm_term, text="Vymazat",
                    command=self._clear_term).grid(row=1, column=2, padx=(0, 4))
 
-        # Styly pro barevná tlačítka (jen vizuální hint, ttk je omezený)
         style = ttk.Style()
         style.configure("green.TButton", foreground="darkgreen")
         style.configure("red.TButton",   foreground="darkred")
@@ -291,24 +292,50 @@ class P65Uploader:
     # -----------------------------------------------------------------------
     def _pick_file(self):
         path = filedialog.askopenfilename(
-            title="Vyber binární program",
-            filetypes=[("Binární soubory", "*.bin"), ("Všechny soubory", "*.*")],
+            title="Vyber soubor programu",
+            filetypes=[
+                ("Programy P65",    "*.bin *.hex"),
+                ("Binární soubory", "*.bin"),
+                ("Intel HEX",       "*.hex"),
+                ("Všechny soubory", "*.*"),
+            ],
             initialdir=os.path.join(os.path.dirname(__file__), "..",
                                     "Firmware", "ramtest", "output")
         )
-        if path:
-            self.file_var.set(path)
-            size = os.path.getsize(path)
-            color = "black" if size == UPLOAD_SIZE else "red"
+        if not path:
+            return
+
+        self.file_var.set(path)
+        ext  = os.path.splitext(path)[1].lower()
+        size = os.path.getsize(path)
+
+        if ext == ".hex":
+            try:
+                with open(path) as f:
+                    lines = [l.strip() for l in f if l.strip().startswith(":")]
+                rec_count = sum(
+                    1 for l in lines
+                    if not l.upper().startswith(":00000001")
+                )
+                self._log(
+                    f"Soubor: {os.path.basename(path)}"
+                    f"  ({rec_count} záznamů IHex, {size} B)\n", "info"
+                )
+            except Exception:
+                self._log(f"Soubor: {os.path.basename(path)}  ({size} B)\n", "info")
+            self.btn_upload.config(text="⬆  Nahrát (h) ihex")
+        else:
+            ok = size == UPLOAD_SIZE
             self._log(
                 f"Soubor: {os.path.basename(path)}  ({size} B"
-                + ("" if size == UPLOAD_SIZE else f"  ≠ {UPLOAD_SIZE} B !")
+                + ("" if ok else f"  ≠ {UPLOAD_SIZE} B !")
                 + ")\n",
-                "info" if size == UPLOAD_SIZE else "error"
+                "info" if ok else "error"
             )
+            self.btn_upload.config(text="⬆  Nahrát (w) bin")
 
     # -----------------------------------------------------------------------
-    # Nahrání
+    # Nahrání – dispatch podle přípony
     # -----------------------------------------------------------------------
     def _upload(self):
         if self._upload_in_progress:
@@ -318,47 +345,52 @@ class P65Uploader:
 
         path = self.file_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showerror("Chyba", "Nejprve vyber soubor .bin")
+            messagebox.showerror("Chyba", "Nejprve vyber soubor (.bin nebo .hex)")
             return
 
-        size = os.path.getsize(path)
-        if size != UPLOAD_SIZE:
-            messagebox.showerror(
-                "Špatná velikost",
-                f"Soubor musí mít přesně {UPLOAD_SIZE} B.\n"
-                f"Tento soubor má {size} B."
-            )
-            return
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".hex":
+            threading.Thread(target=self._do_upload_hex, args=(path,),
+                             daemon=True).start()
+        else:
+            size = os.path.getsize(path)
+            if size != UPLOAD_SIZE:
+                messagebox.showerror(
+                    "Špatná velikost",
+                    f"Soubor .bin musí mít přesně {UPLOAD_SIZE} B.\n"
+                    f"Tento soubor má {size} B."
+                )
+                return
+            threading.Thread(target=self._do_upload_bin, args=(path,),
+                             daemon=True).start()
 
-        threading.Thread(target=self._do_upload, args=(path,),
-                         daemon=True).start()
-
-    def _do_upload(self, path: str):
+    # -----------------------------------------------------------------------
+    # Nahrání raw binary (příkaz 'w')
+    # -----------------------------------------------------------------------
+    def _do_upload_bin(self, path: str):
         self._upload_in_progress = True
+        self._upload_total = UPLOAD_SIZE
         self.root.after(0, self.btn_upload.config, {"state": "disabled"})
+        self.root.after(0, self.progress.config,
+                        {"maximum": UPLOAD_SIZE, "value": 0})
 
         try:
             with open(path, "rb") as f:
                 data = f.read()
 
-            # Odešli příkaz 'w' a krátce počkej na odpověď bootloaderu
             self.ser.write(b"w")
             self.root.after(0, self._log, "→ w  (čekám na bootloader…)\n", "tx")
             time.sleep(0.3)
 
-            # Stream binárky po chunkcích
             sent = 0
-            self.root.after(0, self.progress.config, {"value": 0})
-
             for i in range(0, len(data), CHUNK_SIZE):
                 if not (self.ser and self.ser.is_open):
-                    self.root.after(0, self._log, "Přenos přerušen – port zavřen.\n", "error")
+                    self.root.after(0, self._log,
+                                    "Přenos přerušen – port zavřen.\n", "error")
                     return
                 chunk = data[i:i + CHUNK_SIZE]
                 self.ser.write(chunk)
                 sent += len(chunk)
-
-                # Aktualizuj progress bar (v hlavním vlákně)
                 pct = sent * 100 // UPLOAD_SIZE
                 self.root.after(0, self._update_progress, sent, pct)
 
@@ -374,11 +406,91 @@ class P65Uploader:
             self._upload_in_progress = False
             self.root.after(0, self.btn_upload.config, {"state": "normal"})
 
+    # -----------------------------------------------------------------------
+    # Nahrání Intel HEX (příkaz 'h')
+    # Firmware (ihex_load) přijímá záznamy ':…', odpoví '.' (OK) nebo 'X' (chyba
+    # checksumu) a po EOF záznamu pošle CR+LF.
+    # -----------------------------------------------------------------------
+    def _do_upload_hex(self, path: str):
+        self._upload_in_progress = True
+        self.root.after(0, self.btn_upload.config, {"state": "disabled"})
+
+        try:
+            with open(path) as f:
+                raw_lines = f.readlines()
+
+            # Filtruj pouze validní záznamy (začínají ':')
+            records = [l.strip() for l in raw_lines if l.strip().startswith(":")]
+            if not records:
+                self.root.after(0, self._log,
+                                "Prázdný nebo neplatný .hex soubor.\n", "error")
+                return
+
+            # Data záznamy (typ 00) pro počítání progressu; EOF (01) se posílá taky
+            data_recs = sum(
+                1 for r in records
+                if not r.upper().startswith(":00000001")
+            )
+
+            # Sestavíme celý payload: každý záznam + CRLF
+            payload = b"".join((r + "\r\n").encode("ascii") for r in records)
+            total   = len(payload)
+
+            self._upload_total = total
+            self.root.after(0, self.progress.config,
+                            {"maximum": total, "value": 0})
+            self.root.after(
+                0, self._log,
+                f"→ h  (Intel HEX, {data_recs} datových záznamů, "
+                f"{total} B textu)\n", "tx"
+            )
+
+            # Odešli příkaz 'h', krátce počkej na výzvu firmwaru
+            self.ser.write(b"h")
+            time.sleep(0.2)
+
+            # Stream payload po chunkcích
+            sent = 0
+            for i in range(0, len(payload), CHUNK_SIZE):
+                if not (self.ser and self.ser.is_open):
+                    self.root.after(0, self._log,
+                                    "Přenos přerušen – port zavřen.\n", "error")
+                    return
+                chunk = payload[i:i + CHUNK_SIZE]
+                self.ser.write(chunk)
+                sent += len(chunk)
+                pct = sent * 100 // total
+                self.root.after(0, self._update_progress, sent, pct)
+
+            self.root.after(
+                0, self._log,
+                f"Přenos HEX dokončen ({data_recs} záznamů). "
+                f"Čekám na odpověď firmwaru…\n", "info"
+            )
+            self.root.after(0, self.progress.config, {"value": total})
+            self.root.after(0, self.lbl_progress.config, {"text": "100 %"})
+
+        except Exception as e:
+            self.root.after(0, self._log,
+                            f"Chyba při nahrávání HEX: {e}\n", "error")
+        finally:
+            self._upload_in_progress = False
+            self.root.after(0, self.btn_upload.config, {"state": "normal"})
+            # Vrať progress bar na výchozí rozsah pro .bin
+            self.root.after(0, self.progress.config,
+                            {"maximum": UPLOAD_SIZE, "value": 0})
+            self.root.after(0, self.lbl_progress.config, {"text": ""})
+
+    # -----------------------------------------------------------------------
+    # Progress
+    # -----------------------------------------------------------------------
     def _update_progress(self, sent: int, pct: int):
         self.progress.config(value=sent)
         self.lbl_progress.config(text=f"{pct} %")
         if pct % 10 == 0:
-            self._log(f"  … {sent}/{UPLOAD_SIZE} B  ({pct} %)\n", "prog")
+            self._log(
+                f"  … {sent}/{self._upload_total} B  ({pct} %)\n", "prog"
+            )
 
     # -----------------------------------------------------------------------
     # Helpers
