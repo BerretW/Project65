@@ -17,17 +17,23 @@
 
 ACIA_DATA     = $C800
 ACIA_STATUS   = $C801
+ACIA_CMD      = $C802      ; command register
+ACIA_CTRL     = $C803      ; control register (baud, word length)
 ACIA_TX_EMPTY = $10        ; bit 4 – transmitter empty
+; 19200 Bd, 8N1, ext clock (1,8432 MHz):  CTRL=$1F, CMD=$0B
+ACIA_CTRL_VAL = $1F        ; 8 bit, 1 stop, ext clock (baud = xtal/16)
+ACIA_CMD_VAL  = $0B        ; no parity, normal, TX irq off, RX irq off, DTR low
 
 TEST_START    = $0200
 TEST_END      = $5FFF
 BOOT_RST      = $FF00      ; jumptable: restart bootloaderu (JMP _main)
 
-; Zero page proměnné – adresy $70–$74 jsou mimo cc65 ($00–$1F) i EWOZ ($24–$30)
+; Zero page proměnné – adresy $70–$75 jsou mimo cc65 ($00–$1F) i EWOZ ($24–$30)
 ptr     = $70   ; 2 bajty – pracovní ukazatel do RAM
 errcnt  = $72   ; chyby v aktuálním testu (sytí na $FF)
 totfail = $73   ; počet neúspěšných testů celkem
 pattern = $74   ; aktuální testovací vzor
+slowmode= $75   ; $FF = pomalý režim (tečka+delay každou stránku), $00 = rychlý
 
 
 ; ===========================================================================
@@ -39,6 +45,14 @@ start:
     cld
     stz errcnt
     stz totfail
+
+    ; Reset ACIA – zajistí čistý stav TX po přechodu z bootloaderu
+    lda #$00
+    sta ACIA_STATUS         ; software reset (zápis $00 do status reg)
+    lda #ACIA_CTRL_VAL
+    sta ACIA_CTRL           ; 8N1, ext clock
+    lda #ACIA_CMD_VAL
+    sta ACIA_CMD            ; no parity, TX/RX irq off
 
     ldx #<str_banner
     ldy #>str_banner
@@ -79,9 +93,20 @@ start:
 ; ---------------------------------------------------------------------------
 ; run_pattern_test – A=vzor, X/Y=ukazatel na popis testu
 ; Zapíše vzor do celé oblasti, přečte zpět a spočítá chyby.
+; Pokud pattern=$55: slowmode=$FF – tečka + delay každých 256 B (každou stránku).
+; Jinak:            slowmode=$00 – tečka každých 4 KB (normální rychlost).
 ; ---------------------------------------------------------------------------
 run_pattern_test:
     sta pattern
+    ; nastav slowmode podle vzoru
+    cmp #$55
+    bne @fast
+    lda #$FF
+    sta slowmode
+    bra @go
+@fast:
+    stz slowmode
+@go:
     jsr puts               ; vytiskni popis testu
 
     ; --- fáze zápisu ---
@@ -95,12 +120,20 @@ run_pattern_test:
     jsr inc_ptr
     bcs @pw_done
     lda ptr
-    bne @pw
+    bne @pw                ; čekáme na lo-byte == 0 (hranice stránky)
+    ; jsme na hranici stránky ($xx00)
+    lda slowmode
+    bne @pw_dot            ; slowmode → tečka každou stránku
+    ; rychlý režim → tečka jen každých 4 KB
     lda ptr+1
     and #$0F
     bne @pw
+@pw_dot:
     lda #'.'
     jsr putc
+    lda slowmode
+    beq @pw                ; rychlý režim → bez delay
+    jsr delay
     bra @pw
 @pw_done:
 
@@ -122,11 +155,18 @@ run_pattern_test:
     bcs @pv_done
     lda ptr
     bne @pv
+    ; hranice stránky
+    lda slowmode
+    bne @pv_dot
     lda ptr+1
     and #$0F
     bne @pv
+@pv_dot:
     lda #'.'
     jsr putc
+    lda slowmode
+    beq @pv
+    jsr delay
     bra @pv
 @pv_done:
 
@@ -226,6 +266,26 @@ inc_ptr:
     rts
 @cont:
     clc
+    rts
+
+
+; ---------------------------------------------------------------------------
+; delay – krátká pauza (zachová A, X)
+; ~128 × 256 = 32 768 iterací, každá ~8 cyklů ≈ 65 ms @ 4 MHz
+; ---------------------------------------------------------------------------
+delay:
+    pha
+    phx
+    ldx #$80               ; 128 vnějších iterací
+@outer:
+    lda #$00               ; 256 vnitřních iterací (dec z 0 → 255 → … → 0)
+@inner:
+    dec
+    bne @inner
+    dex
+    bne @outer
+    plx
+    pla
     rts
 
 

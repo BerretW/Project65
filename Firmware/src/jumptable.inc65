@@ -1,0 +1,41 @@
+; jumptable.inc65
+; Pevné adresy ROM jump table pro Project65 SBC 65C02.
+; Includuj tento soubor do svého programu — pak můžeš volat ROM rutiny
+; bez nutnosti linkovat firmware nebo znát vnitřní adresy.
+;
+; Použití:
+;   .include "jumptable.inc65"
+;   JSR ROM_PUTC        ; odešli znak v A
+;   JSR ROM_GETS        ; odešli řetězec (A=lo, X=hi adresy)
+;
+; Volací konvence (cc65 / raw asm):
+;   ROM_PUTC      A = znak k odeslání
+;   ROM_GETS      A/X = lo/hi adresa null-terminovaného řetězce
+;   ROM_GETC      -> A = přijatý znak (blokuje)
+;   ROM_SCAN      -> A = přijatý znak nebo 0 (neblokovací)
+;   ROM_PRTBYTE   A = bajt k tisku jako 2 hex znaky
+;   ROM_INSCAN    -> A = znak z klávesnice nebo serial (neblokovací)
+;   ROM_GETINP    -> A = znak z klávesnice nebo serial (blokující)
+;   ROM_DELAY     A = délka zpoždění (softwarová smyčka)
+;   ROM_ACIA_INIT     bez parametrů, nastaví 19200 8N1
+;   ROM_IRQ_INIT      bez parametrů
+;   ROM_NMI_INIT      bez parametrů
+;   ROM_INIT_VEC      bez parametrů, nastaví IRQ/NMI vektory
+
+ROM_RST       = $FF00   ; Restart / návrat do bootloaderu
+ROM_INTEN     = $FF03   ; Povolení přerušení (CLI)
+ROM_INTDI     = $FF06   ; Zakázání přerušení (SEI)
+ROM_PUTC      = $FF09   ; Odešli znak v A na sériový port
+ROM_GETS      = $FF0C   ; Odešli řetězec (ptr A/X, null-terminated)
+ROM_GETC      = $FF0F   ; Čekej a přijmi znak -> A
+ROM_SCAN      = $FF12   ; Neblokovací příjem -> A (0 = nic)
+ROM_PUTNL     = $FF15   ; Odešli CR+LF
+ROM_PRINTNL   = $FF18   ; Odešli řetězec + CR+LF
+ROM_PRTBYTE   = $FF1B   ; Tisk A jako 2 hex znaky na sériový port
+ROM_INSCAN    = $FF1E   ; Scan klávesnice nebo sériového portu -> A
+ROM_GETINP    = $FF21   ; Čekej na vstup (kbd nebo serial) -> A
+ROM_DELAY     = $FF24   ; Softwarové zpoždění (délka v A)
+ROM_ACIA_INIT = $FF27   ; Inicializace ACIA (19200 8N1)
+ROM_IRQ_INIT  = $FF2A   ; Inicializace IRQ timeru (VIA2, $CC80)
+ROM_NMI_INIT  = $FF2D   ; Inicializace NMI timeru (VIA1, $CC00)
+ROM_INIT_VEC  = $FF30   ; Nastav IRQ/NMI vektory na výchozí ISR
