@@ -8,9 +8,13 @@ dst = os.path.join(os.path.dirname(__file__), 'output', 'ramtest.hex')
 with open(src, 'rb') as f:
     data = f.read()
 
+FILL = (0x00, 0xFF)   # byty považované za prázdné
+
 records = []
 for i in range(0, len(data), 16):
     chunk = data[i:i+16]
+    if all(b in FILL for b in chunk):
+        continue
     n     = len(chunk)
     addr  = BASE_ADDR + i
     raw   = n + (addr >> 8) + (addr & 0xFF) + sum(chunk)

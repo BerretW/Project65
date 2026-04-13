@@ -2,38 +2,42 @@
 ;
 ; Nahravam bootloaderem prikazem 'w' (8192 B → $6000–$7FFF).
 ; Po nahrání automaticky skočí na RAMDISK_RESET_VECTOR ($7FFC) → start.
-; Po dokončení testů skočí na $FF00 (jumptable RST → restart bootloaderu).
+; Po dokončení testů skočí na ROM_RST ($FF00) → restart bootloaderu.
 ;
-; Testovaná oblast: $0200–$5FFF (pracovní RAM, mimo ZP a program samotný)
+; Testovaná oblast: volitelná stránka (hex byte, Enter=vše $0200–$5FFF)
 ;
 ; Testy:
 ;   1. Pattern $AA  – zápis, čtení, verifikace
 ;   2. Pattern $55  – zápis, čtení, verifikace
 ;   3. Adresový test – bajt = lo-byte adresy (detekce zkratů adresní sběrnice)
 ;
-; ACIA na $C800 se znovu neinicializuje – bootloader ji nastaví na 19200 Bd.
+; I/O rutiny jsou volány přes ROM jump table (jumptable.inc65).
+; ACIA je inicializována přes ROM_ACIA_INIT (19200 8N1).
 
 .setcpu "65C02"
 
-ACIA_DATA     = $C800
-ACIA_STATUS   = $C801
-ACIA_CMD      = $C802      ; command register
-ACIA_CTRL     = $C803      ; control register (baud, word length)
-ACIA_TX_EMPTY = $10        ; bit 4 – transmitter empty
-; 19200 Bd, 8N1, ext clock (1,8432 MHz):  CTRL=$1F, CMD=$0B
-ACIA_CTRL_VAL = $1F        ; 8 bit, 1 stop, ext clock (baud = xtal/16)
-ACIA_CMD_VAL  = $0B        ; no parity, normal, TX irq off, RX irq off, DTR low
+.include "jumptable.inc65"
 
-TEST_START    = $0200
-TEST_END      = $5FFF
-BOOT_RST      = $FF00      ; jumptable: restart bootloaderu (JMP _main)
+TEST_FULL_START = $0200
+TEST_FULL_END   = $5FFF
 
-; Zero page proměnné – adresy $70–$75 jsou mimo cc65 ($00–$1F) i EWOZ ($24–$30)
-ptr     = $70   ; 2 bajty – pracovní ukazatel do RAM
-errcnt  = $72   ; chyby v aktuálním testu (sytí na $FF)
-totfail = $73   ; počet neúspěšných testů celkem
-pattern = $74   ; aktuální testovací vzor
-slowmode= $75   ; $FF = pomalý režim (tečka+delay každou stránku), $00 = rychlý
+; Zero page proměnné
+; $00–$1F  cc65 runtime
+; $24–$30  EWOZ
+; $31–$6F  volné – zde náš page_mode
+; $70–$74  naše proměnné (původní rozsah, ověřen funkční)
+; $7A      tstart_hi (ověřen funkční)
+; $10      slowmode (tmp1 cc65 – ale cc65 runtime se v ramtestu nevolá)
+;
+; page_mode:  $00 = full test ($0200–$5FFF, inc_ptr porovnává s hardcoded $60)
+;             $01 = single page (inc_ptr porovnává ptr+1 s tstart_hi)
+page_mode = $32   ; bezpečné ZP (mimo cc65/EWOZ/ROM oblasti)
+ptr       = $70   ; 2 bajty – pracovní ukazatel do RAM
+errcnt    = $72   ; chyby v aktuálním testu (sytí na $FF)
+totfail   = $73   ; počet neúspěšných testů celkem
+pattern   = $74   ; aktuální testovací vzor
+tstart_hi = $7A   ; hi-byte začátku testované oblasti (lo vždy $00)
+slowmode  = $10   ; $FF = pomalý režim (tečka+delay každou stránku), $00 = rychlý
 
 
 ; ===========================================================================
@@ -46,17 +50,18 @@ start:
     stz errcnt
     stz totfail
 
-    ; Reset ACIA – zajistí čistý stav TX po přechodu z bootloaderu
-    lda #$00
-    sta ACIA_STATUS         ; software reset (zápis $00 do status reg)
-    lda #ACIA_CTRL_VAL
-    sta ACIA_CTRL           ; 8N1, ext clock
-    lda #ACIA_CMD_VAL
-    sta ACIA_CMD            ; no parity, TX/RX irq off
+    ; Inicializace ACIA – 19200 8N1
+    jsr ROM_ACIA_INIT
 
-    ldx #<str_banner
-    ldy #>str_banner
-    jsr puts
+    lda #<str_banner
+    ldx #>str_banner
+    jsr ROM_GETS
+
+    ; Dotaz na stránku → nastaví tstart_hi + page_mode
+    jsr ask_page
+
+    ; Vypiš vybraný rozsah
+    jsr print_range
 
     ; Test 1 – pattern $AA
     lda #$AA
@@ -78,27 +83,124 @@ start:
     ; Výsledek
     lda totfail
     bne @fail
-    ldx #<str_pass
-    ldy #>str_pass
-    jsr puts
-    jmp BOOT_RST
+    lda #<str_pass
+    ldx #>str_pass
+    jsr ROM_GETS
+    jmp ROM_RST
 
 @fail:
-    ldx #<str_fail
-    ldy #>str_fail
-    jsr puts
-    jmp BOOT_RST
+    lda #<str_fail
+    ldx #>str_fail
+    jsr ROM_GETS
+    jmp ROM_RST
 
 
 ; ---------------------------------------------------------------------------
-; run_pattern_test – A=vzor, X/Y=ukazatel na popis testu
+; ask_page – zeptá se uživatele na číslo stránky (2 hex znaky nebo Enter=vše).
+; Nastaví: tstart_hi, page_mode ($00=full, $01=single page).
+; ---------------------------------------------------------------------------
+ask_page:
+    lda #<str_prompt
+    ldx #>str_prompt
+    jsr ROM_GETS
+
+    jsr ROM_GETC            ; přečti první znak
+    cmp #$0D                ; Enter → celý rozsah
+    bne @hex1
+
+    ; Enter → full test $0200–$5FFF
+    jsr ROM_PUTNL
+    lda #>TEST_FULL_START   ; $02
+    sta tstart_hi
+    stz page_mode           ; $00 = full
+    rts
+
+@hex1:
+    jsr ROM_PUTC            ; echo prvního znaku
+    jsr to_nibble           ; A = horní nibble (0–15)
+    asl A
+    asl A
+    asl A
+    asl A
+    sta tstart_hi           ; dočasné uložení horního nibble
+
+    jsr ROM_GETC            ; přečti druhý znak
+    jsr ROM_PUTC            ; echo
+    jsr to_nibble           ; A = dolní nibble (0–15)
+    ora tstart_hi           ; kombinuj oba nibble
+    sta tstart_hi           ; finální číslo stránky
+    lda #$01
+    sta page_mode           ; $01 = single page
+    jsr ROM_PUTNL
+    rts
+
+
+; ---------------------------------------------------------------------------
+; to_nibble – převede ASCII hex znak v A na číslo 0–15.
+; Nevalidní znaky vrátí 0. Akceptuje 0–9, A–F, a–f.
+; ---------------------------------------------------------------------------
+to_nibble:
+    cmp #'0'
+    bcc @ret0
+    cmp #'9'+1
+    bcc @digit
+    ora #$20                ; toLower
+    cmp #'a'
+    bcc @ret0
+    cmp #'f'+1
+    bcs @ret0
+    sec
+    sbc #'a'-10             ; 'a'→10, …, 'f'→15
+    rts
+@digit:
+    sec
+    sbc #'0'                ; '0'→0, …, '9'→9
+    rts
+@ret0:
+    lda #0
+    rts
+
+
+; ---------------------------------------------------------------------------
+; print_range – tiskne "Rozsah: $XX00-$XXFF\r\n\r\n"
+; ---------------------------------------------------------------------------
+print_range:
+    lda #<str_range_a
+    ldx #>str_range_a
+    jsr ROM_GETS            ; "Rozsah: $"
+    lda tstart_hi
+    jsr ROM_PRTBYTE         ; XX (hi-byte startu)
+    lda #'0'
+    jsr ROM_PUTC
+    lda #'0'
+    jsr ROM_PUTC            ; "00"
+    lda #'-'
+    jsr ROM_PUTC
+    lda #'$'
+    jsr ROM_PUTC
+    ; hi-byte konce: full=$5F, single=tstart_hi
+    lda page_mode
+    bne @single
+    lda #>TEST_FULL_END     ; $5F
+    bra @print_end
+@single:
+    lda tstart_hi           ; single page konec = stejná stránka
+@print_end:
+    jsr ROM_PRTBYTE         ; XX (hi-byte konce)
+    lda #<str_range_b
+    ldx #>str_range_b
+    jsr ROM_GETS            ; "FF\r\n\r\n"
+    rts
+
+
+; ---------------------------------------------------------------------------
+; run_pattern_test – A=vzor, X=lo-byte popisu testu, Y=hi-byte popisu testu
 ; Zapíše vzor do celé oblasti, přečte zpět a spočítá chyby.
-; Pokud pattern=$55: slowmode=$FF – tečka + delay každých 256 B (každou stránku).
+; Pokud pattern=$55: slowmode=$FF – tečka + delay každou stránku.
 ; Jinak:            slowmode=$00 – tečka každých 4 KB (normální rychlost).
 ; ---------------------------------------------------------------------------
 run_pattern_test:
     sta pattern
-    ; nastav slowmode podle vzoru
     cmp #$55
     bne @fast
     lda #$FF
@@ -107,12 +209,15 @@ run_pattern_test:
 @fast:
     stz slowmode
 @go:
-    jsr puts               ; vytiskni popis testu
+    phy                     ; ulož Y (hi) na stack
+    txa                     ; A = lo-byte řetězce
+    plx                     ; X = hi-byte řetězce
+    jsr ROM_GETS
 
     ; --- fáze zápisu ---
-    lda #<TEST_START
+    lda #$00
     sta ptr
-    lda #>TEST_START
+    lda tstart_hi
     sta ptr+1
 @pw:
     lda pattern
@@ -120,27 +225,26 @@ run_pattern_test:
     jsr inc_ptr
     bcs @pw_done
     lda ptr
-    bne @pw                ; čekáme na lo-byte == 0 (hranice stránky)
+    bne @pw                 ; čekáme na lo-byte == 0 (hranice stránky)
     ; jsme na hranici stránky ($xx00)
     lda slowmode
-    bne @pw_dot            ; slowmode → tečka každou stránku
-    ; rychlý režim → tečka jen každých 4 KB
+    bne @pw_dot
     lda ptr+1
     and #$0F
     bne @pw
 @pw_dot:
     lda #'.'
-    jsr putc
+    jsr ROM_PUTC
     lda slowmode
-    beq @pw                ; rychlý režim → bez delay
-    jsr delay
+    beq @pw
+    jsr ROM_DELAY
     bra @pw
 @pw_done:
 
     ; --- fáze čtení + verifikace ---
-    lda #<TEST_START
+    lda #$00
     sta ptr
-    lda #>TEST_START
+    lda tstart_hi
     sta ptr+1
     stz errcnt
 @pv:
@@ -148,14 +252,13 @@ run_pattern_test:
     cmp pattern
     beq @pok
     inc errcnt
-    bne @pok               ; ochrana proti přetečení errcnt přes $FF
-    dec errcnt             ; drž na $FF
+    bne @pok
+    dec errcnt
 @pok:
     jsr inc_ptr
     bcs @pv_done
     lda ptr
     bne @pv
-    ; hranice stránky
     lda slowmode
     bne @pv_dot
     lda ptr+1
@@ -163,30 +266,32 @@ run_pattern_test:
     bne @pv
 @pv_dot:
     lda #'.'
-    jsr putc
+    jsr ROM_PUTC
     lda slowmode
     beq @pv
-    jsr delay
+    jsr ROM_DELAY
     bra @pv
 @pv_done:
 
-    jmp print_result       ; vytiskni OK / NN err a vrať se
+    jmp print_result
 
 
 ; ---------------------------------------------------------------------------
-; run_addr_test – X/Y=ukazatel na popis testu
-; Zapíše do každého bajtu lo-byte jeho adresy, přečte zpět.
+; run_addr_test – X=lo-byte popisu testu, Y=hi-byte popisu testu
 ; ---------------------------------------------------------------------------
 run_addr_test:
-    jsr puts
+    phy
+    txa
+    plx
+    jsr ROM_GETS
 
     ; --- fáze zápisu ---
-    lda #<TEST_START
+    lda #$00
     sta ptr
-    lda #>TEST_START
+    lda tstart_hi
     sta ptr+1
 @aw:
-    lda ptr                ; lo-byte adresy
+    lda ptr
     sta (ptr)
     jsr inc_ptr
     bcs @aw_done
@@ -196,14 +301,14 @@ run_addr_test:
     and #$0F
     bne @aw
     lda #'.'
-    jsr putc
+    jsr ROM_PUTC
     bra @aw
 @aw_done:
 
     ; --- fáze čtení + verifikace ---
-    lda #<TEST_START
+    lda #$00
     sta ptr
-    lda #>TEST_START
+    lda tstart_hi
     sta ptr+1
     stz errcnt
 @av:
@@ -222,7 +327,7 @@ run_addr_test:
     and #$0F
     bne @av
     lda #'.'
-    jsr putc
+    jsr ROM_PUTC
     bra @av
 @av_done:
 
@@ -231,127 +336,69 @@ run_addr_test:
 
 ; ---------------------------------------------------------------------------
 ; print_result – tiskne "OK\r\n" nebo "NN err\r\n" dle errcnt
-; Spouští se přes JMP (chová se jako subrutin – volá se JMP, vrátí caller).
 ; ---------------------------------------------------------------------------
 print_result:
     lda errcnt
     bne @bad
-    ldx #<str_ok
-    ldy #>str_ok
-    jsr puts
+    lda #<str_ok
+    ldx #>str_ok
+    jsr ROM_GETS
     rts
 
 @bad:
     inc totfail
     lda errcnt
-    jsr prbyte             ; 2 hex cifry
-    ldx #<str_err
-    ldy #>str_err
-    jsr puts
+    jsr ROM_PRTBYTE
+    lda #<str_err
+    ldx #>str_err
+    jsr ROM_GETS
     rts
 
 
 ; ---------------------------------------------------------------------------
-; inc_ptr – ptr++, C=1 pokud ptr překročil TEST_END ($5FFF → $6000)
+; inc_ptr – ptr++, C=1 pokud oblast vyčerpána
+;
+; page_mode = $00 (full):   porovnává ptr+1 s hardcoded #$60 (= >TEST_FULL_END+1)
+; page_mode ≠ $00 (single): porovnává ptr+1 s tstart_hi; hotovo když ptr+1 > tstart_hi
 ; ---------------------------------------------------------------------------
 inc_ptr:
     inc ptr
     bne @chk
     inc ptr+1
 @chk:
+    lda page_mode
+    bne @single
+    ; --- full range: ptr+1 < $60? ---
     lda ptr+1
-    cmp #>TEST_END + 1     ; = $60
-    bcc @cont              ; ptr+1 < $60 → pokračuj
+    cmp #>TEST_FULL_END + 1     ; = $60
+    bcc @cont
     sec
+    rts
+@single:
+    ; --- single page: ptr+1 == tstart_hi → still on page ---
+    lda ptr+1
+    cmp tstart_hi
+    beq @cont                   ; stejná stránka → pokračuj
+    sec                         ; jiná stránka → konec
     rts
 @cont:
     clc
     rts
 
 
-; ---------------------------------------------------------------------------
-; delay – krátká pauza (zachová A, X)
-; ~128 × 256 = 32 768 iterací, každá ~8 cyklů ≈ 65 ms @ 4 MHz
-; ---------------------------------------------------------------------------
-delay:
-    pha
-    phx
-    ldx #$80               ; 128 vnějších iterací
-@outer:
-    lda #$00               ; 256 vnitřních iterací (dec z 0 → 255 → … → 0)
-@inner:
-    dec
-    bne @inner
-    dex
-    bne @outer
-    plx
-    pla
-    rts
-
-
-; ---------------------------------------------------------------------------
-; putc – odešle znak z A přes ACIA (polling, bez timeout)
-; ---------------------------------------------------------------------------
-putc:
-    pha
-@wait:
-    lda ACIA_STATUS
-    and #ACIA_TX_EMPTY
-    beq @wait
-    pla
-    sta ACIA_DATA
-    rts
-
-
-; ---------------------------------------------------------------------------
-; puts – vytiskne řetězec ukončený $00
-; Vstup: X = lo-byte adresy řetězce, Y = hi-byte adresy řetězce
-; ---------------------------------------------------------------------------
-puts:
-    stx ptr
-    sty ptr+1
-    ldy #0
-@lp:
-    lda (ptr),y
-    beq @done
-    jsr putc
-    iny
-    bne @lp
-@done:
-    rts
-
-
-; ---------------------------------------------------------------------------
-; prbyte – vytiskne A jako 2 hex cifry (HH)
-; ---------------------------------------------------------------------------
-prbyte:
-    pha
-    lsr
-    lsr
-    lsr
-    lsr
-    jsr prhex              ; hi nibble
-    pla
-    ; fall through
-
-prhex:
-    and #$0F
-    ora #'0'
-    cmp #':'               ; > '9' ?
-    bcc @out
-    adc #6                 ; A–F
-@out:
-    jmp putc               ; putc RTS → vrátí se volajícímu prbyte/prhex
-
-
 ; ===========================================================================
 .segment "RODATA"
 ; ===========================================================================
 
-str_banner: .byte $0D,$0A
-            .byte "==============================",$0D,$0A
-            .byte " P65 RAM Test  $0200-$5FFF",$0D,$0A
-            .byte "==============================",$0D,$0A,0
+str_banner:  .byte $0D,$0A
+             .byte "==============================",$0D,$0A
+             .byte "       P65 RAM Test",$0D,$0A
+             .byte "==============================",$0D,$0A,0
+
+str_prompt:  .byte "Stranka (hex, Enter=vse): ",0
+
+str_range_a: .byte "Rozsah: $",0
+str_range_b: .byte "FF",$0D,$0A,$0D,$0A,0
 
 str_t1:     .byte "[1/3] Pattern $AA ... ",0
 str_t2:     .byte "[2/3] Pattern $55 ... ",0
@@ -371,7 +418,6 @@ str_fail:   .byte $0D,$0A
 
 ; ===========================================================================
 ; Vektory RAM disku – musí být na $7FFC (offset $1FFC od začátku $6000)
-; Bootloader čte: RAMDISK_RESET_VECTOR = $7FFC → skočí sem po 'w' nebo 's'
 ; ===========================================================================
 .segment "RAMVEC"
     .addr start            ; $7FFC–$7FFD = adresa start ($6000)
