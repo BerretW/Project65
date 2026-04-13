@@ -16,7 +16,7 @@ _NMI_ISR:         PHA
                   PHY
                   JSR _NMI_Event
                   LDA #$4D
-                  STA VIA2_T1C_H
+                  STA VIA1_T1C_H    ; Bug #2 fix: NMI generuje VIA1 (IC18), ne VIA2
 @end:             PLY
                   PLX
                   PLA

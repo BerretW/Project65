@@ -69,12 +69,9 @@ _irq_init:        ;LDA #$FF
                   ;STA VIA1_IER        ;enable TIMER1 interrupt
                   RTS
 
-_nmi_init:        LDA #$FF
-                  STA VIA2_T1C_H      ;set hibyte of Timer1 counter
-                  LDA #$40
-                  STA VIA2_ACR        ;setup continuous interrupts without PB7
-                  LDA #$C0
-                  STA VIA2_IER        ;enable TIMER1 interrupt
+_nmi_init:        ; Bug #1 fix: NMI generuje IC18 (VIA1, $CC00), ne VIA2.
+                  ; V minimal buildu je NMI_Event prázdná — timer nepotřebujeme.
+                  ; Plný firmware: STA VIA1_T1C_H / VIA1_ACR / VIA1_IER
                   RTS
 
 
