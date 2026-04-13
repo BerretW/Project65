@@ -147,7 +147,7 @@ void IRQ_Event(){
   acia_putc('I');
 }
 void NMI_Event(){
-  //acia_putc('N');
+  kb_poll();
 }
 
 void main(void) {

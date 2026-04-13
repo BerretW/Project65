@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls c:/Users/Alois/git/Project65/Firmware/src/*.asm c:/Users/Alois/git/Project65/Firmware/src/*.h c:/Users/Alois/git/Project65/Firmware/src/*.c)",
+      "Bash(cmd /c build_minimal.bat)",
+      "Bash(cmd /c \"build_minimal.bat\")",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(ca65 --cpu 65c02 main_min.s -o ../output/main_min.o -l ../lst/main_min.lst)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(ca65 --cpu 65c02 stubs_min.asm -o ../output/stubs_min.o)",
+      "Bash(ca65 --cpu 65c02 acia.asm -o ../output/acia.o)",
+      "Bash(echo \"acia exit: $?\")",
+      "Bash(ca65 --cpu 65c02 ewoz.asm -o ../output/ewoz.o)",
+      "Bash(echo \"ewoz exit: $?\")",
+      "Bash(ca65 --cpu 65c02 utils.asm -o ../output/utils.o)",
+      "Bash(echo \"utils: $?\")",
+      "Bash(ca65 --cpu 65c02 jumptable.asm -o ../output/jumptable.o)",
+      "Bash(echo \"jumptable: $?\")",
+      "Bash(ca65 --cpu 65c02 routines.asm -o ../output/routines.o)",
+      "Bash(ld65 -C ../config/MIN_ROM.cfg -m min_rom.map main_min.o acia.o ewoz.o utils.o jumptable.o routines.o vectors.o interrupts.o zeropage.o stubs_min.o /c/cc65/lib/none.lib -o MIN_ROM.bin)",
+      "Bash(echo \"ld65 exit: $?\")",
+      "Bash(ld65 -C ../config/MIN_ROM.cfg -m min_rom.map main_min.o acia.o ewoz.o utils.o jumptable.o routines.o vectors.o interrupts.o zeropage.o stubs_min.o ../library/p65.lib /c/cc65/lib/none.lib -o MIN_ROM.bin)",
+      "Bash(cc65 -t none -O --cpu 65C02 main_min.c -o main_min_check.s)",
+      "Bash(ld65 -C ../config/MIN_ROM.cfg -m min_rom.map main_min.o acia.o ewoz.o utils.o jumptable.o routines.o vectors.o interrupts.o zeropage.o stubs_min.o ../library/p65.lib -o MIN_ROM.bin)",
+      "Bash(rm -f output/*.*)",
+      "Bash(cmd /c \"build_minimal.bat > build_log.txt 2>&1\")",
+      "Bash(cmd //c \"build_minimal.bat > c:\\\\\\\\Users\\\\\\\\Alois\\\\\\\\git\\\\\\\\Project65\\\\\\\\Firmware\\\\\\\\build_log.txt 2>&1\")",
+      "Bash(cat build_log.txt)",
+      "Bash(cat \"c:/Users/Alois/git/Project65/Firmware/build_log.txt\")",
+      "Bash(powershell -Command \"Set-Location 'C:\\\\Users\\\\Alois\\\\git\\\\Project65\\\\Firmware'; & '.\\\\build_minimal.bat' 2>&1\")",
+      "Read(//tmp/**)",
+      "Read(//tmp/p65_release/**)",
+      "Bash(unzip -l \"c:/Users/Alois/git/Project65/Firmware/release/BB_V7_Bootloader.zip\")",
+      "Bash(ar65 t:*)",
+      "Bash(od65 --dump-all crt0.o)",
+      "Bash(xargs grep:*)",
+      "Bash(ca65 --cpu 65c02 crt0_p65.asm -o ../output/crt0_p65.o)",
+      "Bash(ld65 -C /tmp/test_link.cfg -m test.map crt0_p65.o main_min.o acia.o ewoz.o utils.o jumptable.o routines.o vectors.o interrupts.o zeropage.o stubs_min.o /c/cc65/lib/none.lib -o test.bin)"
+    ]
+  }
+}

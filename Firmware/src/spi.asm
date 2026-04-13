@@ -89,9 +89,8 @@ _spi_read:					JSR _spi_write
 										JSR spi_delay
 										RTS
 
-_spi_begin:					;JSR _SPI_TRAN
-										JSR spi_delay
-										LDA #%11111110
+_spi_begin:					JSR spi_delay
+										JSR _SPI_TRAN   ; preved cislo zarizeni (A) na hodnotu CSSEL
 										STA SPI_CSSEL
 										JSR spi_delay
 										RTS

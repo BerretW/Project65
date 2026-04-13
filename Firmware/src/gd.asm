@@ -75,7 +75,7 @@ _GD_WR_16: 			jsr     pushax
 ; return
 ; ---------------------------------------------------------------
 _GD_RD_8:		TAY
-						LDA #14
+						LDA #1          ; GD je na CS0 = zarizeni 1
 						JSR _spi_begin
 						TYA
 
