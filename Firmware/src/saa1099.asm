@@ -1,5 +1,5 @@
-SAA_DATA    = $C400
-SAA_REG     = $C401
+SAA_DATA    = $CD00
+SAA_REG     = $CD01
 
 ;;Register map of SAA1099
 AM0         = $0

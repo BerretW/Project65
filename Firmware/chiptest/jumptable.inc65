@@ -1,0 +1,41 @@
+; jumptable.inc65
+; Pevne adresy ROM jump table pro Project65 SBC 65C02.
+; Includuj tento soubor do sveho programu - pak muzes volat ROM rutiny
+; bez nutnosti linkovat firmware nebo znat vnitrni adresy.
+;
+; Pouziti:
+;   .include "jumptable.inc65"
+;   JSR ROM_PUTC        ; odesli znak v A
+;   JSR ROM_GETS        ; odesli retezec (A=lo, X=hi adresy)
+;
+; Volaci konvence (cc65 / raw asm):
+;   ROM_PUTC      A = znak k odeslani
+;   ROM_GETS      A/X = lo/hi adresa null-terminovaneho retezce
+;   ROM_GETC      -> A = prijaty znak (blokuje)
+;   ROM_SCAN      -> A = prijaty znak nebo 0 (neblokovaci)
+;   ROM_PRTBYTE   A = bajt k tisku jako 2 hex znaky
+;   ROM_INSCAN    -> A = znak z klavesnice nebo serial (neblokovaci)
+;   ROM_GETINP    -> A = znak z klavesnice nebo serial (blokovaci)
+;   ROM_DELAY     A = delka zpozdenni (softwarova smycka)
+;   ROM_ACIA_INIT     bez parametru, nastavi 19200 8N1
+;   ROM_IRQ_INIT      bez parametru
+;   ROM_NMI_INIT      bez parametru
+;   ROM_INIT_VEC      bez parametru, nastavi IRQ/NMI vektory
+
+ROM_RST       = $FF00   ; Restart / navrat do bootloaderu
+ROM_INTEN     = $FF03   ; Povoleni preruseni (CLI)
+ROM_INTDI     = $FF06   ; Zakazani preruseni (SEI)
+ROM_PUTC      = $FF09   ; Odesli znak v A na seriovy port
+ROM_GETS      = $FF0C   ; Odesli retezec (ptr A/X, null-terminated)
+ROM_GETC      = $FF0F   ; Cekej a prijmi znak -> A
+ROM_SCAN      = $FF12   ; Neblokovaci prijem -> A (0 = nic)
+ROM_PUTNL     = $FF15   ; Odesli CR+LF
+ROM_PRINTNL   = $FF18   ; Odesli retezec + CR+LF
+ROM_PRTBYTE   = $FF1B   ; Tisk A jako 2 hex znaky na seriovy port
+ROM_INSCAN    = $FF1E   ; Scan klavesnice nebo serioveho portu -> A
+ROM_GETINP    = $FF21   ; Cekej na vstup (kbd nebo serial) -> A
+ROM_DELAY     = $FF24   ; Softwarove zpozdenni (delka v A)
+ROM_ACIA_INIT = $FF27   ; Inicializace ACIA (19200 8N1)
+ROM_IRQ_INIT  = $FF2A   ; Inicializace IRQ timeru (VIA2, $CC80)
+ROM_NMI_INIT  = $FF2D   ; Inicializace NMI timeru (VIA1, $CC00)
+ROM_INIT_VEC  = $FF30   ; Nastav IRQ/NMI vektory na vychozi ISR

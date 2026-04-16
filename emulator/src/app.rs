@@ -127,11 +127,12 @@ impl MemTab {
 // ── Right-panel tabs ─────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum RightTab { Cpu, Via1, Via2, Acia, Irq }
+pub enum RightTab { Cpu, Via1, Via2, Acia, Irq, Vdp, Saa }
 
 impl RightTab {
     const ALL: &'static [RightTab] =
-        &[RightTab::Cpu, RightTab::Via1, RightTab::Via2, RightTab::Acia, RightTab::Irq];
+        &[RightTab::Cpu, RightTab::Via1, RightTab::Via2, RightTab::Acia,
+          RightTab::Irq, RightTab::Vdp, RightTab::Saa];
 
     fn label(self) -> &'static str {
         match self {
@@ -140,6 +141,8 @@ impl RightTab {
             RightTab::Via2 => " VIA2 ",
             RightTab::Acia => " ACIA ",
             RightTab::Irq  => " IRQ ",
+            RightTab::Vdp  => " VDP ",
+            RightTab::Saa  => " SAA ",
         }
     }
 }
@@ -552,6 +555,8 @@ fn draw_right_panel(f: &mut Frame, app: &mut App, area: Rect) {
         RightTab::Via2 => draw_via_panel(f, app, block_area, false),
         RightTab::Acia => draw_acia_panel(f, app, block_area),
         RightTab::Irq  => draw_irq_panel(f, app, block_area),
+        RightTab::Vdp  => draw_vdp_panel(f, app, block_area),
+        RightTab::Saa  => draw_saa_panel(f, app, block_area),
     }
 }
 
@@ -915,6 +920,154 @@ fn draw_irq_panel(f: &mut Frame, app: &App, area: Rect) {
                 .title(" IRQ Latch $C400 — IC17+IC27 ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Red))),
+        area,
+    );
+}
+
+// ── VDP panel ─────────────────────────────────────────────────────────────────
+
+fn draw_vdp_panel(f: &mut Frame, app: &App, area: Rect) {
+    let text: Vec<Line> = if let Ok(st) = app.shared.try_lock() {
+        let v = &st.bus.vdp;
+        let irq_str = if v.irq { "VBlank !" } else { "---" };
+        vec![
+            Line::from(vec![
+                Span::styled(" Mode:  ", Style::default().fg(Color::Yellow)),
+                Span::raw(v.mode_str()),
+                Span::styled("  Screen:", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    if v.screen_enabled() { " ON " } else { " OFF" },
+                    Style::default().fg(if v.screen_enabled() { Color::Green } else { Color::DarkGray }),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Status: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:02X}  ", v.status)),
+                Span::styled(
+                    irq_str,
+                    Style::default().fg(if v.irq { Color::Red } else { Color::DarkGray })
+                        .add_modifier(if v.irq { Modifier::BOLD } else { Modifier::empty() }),
+                ),
+                Span::styled("  IRQ_EN:", Style::default().fg(Color::DarkGray)),
+                Span::raw(if v.irq_enabled() { "1" } else { "0" }),
+            ]),
+            Line::from(vec![
+                Span::styled(" VRAMptr:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:04X}", v.vram_addr)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" R0:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", v.regs[0])),
+                Span::styled("R1:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", v.regs[1])),
+                Span::styled("R2:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", v.regs[2])),
+                Span::styled("R3:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}", v.regs[3])),
+            ]),
+            Line::from(vec![
+                Span::styled(" R4:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", v.regs[4])),
+                Span::styled("R5:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", v.regs[5])),
+                Span::styled("R6:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", v.regs[6])),
+                Span::styled("R7:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}", v.regs[7])),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Name:   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:04X}", v.name_table_addr())),
+                Span::styled("  Color: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:04X}", v.color_table_addr())),
+            ]),
+            Line::from(vec![
+                Span::styled(" Pattern:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:04X}", v.pattern_gen_addr())),
+                Span::styled("  SprAt: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:04X}", v.sprite_attr_addr())),
+            ]),
+            Line::from(vec![
+                Span::styled(" SprPat: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:04X}", v.sprite_pat_addr())),
+            ]),
+        ]
+    } else {
+        vec![Line::from(" [CPU thread běží] ")]
+    };
+
+    f.render_widget(
+        Paragraph::new(text)
+            .block(Block::default()
+                .title(" VDP $C000  TMS9918A (EXP_TMS9918A_V1) ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::LightBlue))),
+        area,
+    );
+}
+
+// ── SAA1099 panel ──────────────────────────────────────────────────────────────
+
+fn draw_saa_panel(f: &mut Frame, app: &App, area: Rect) {
+    let text: Vec<Line> = if let Ok(st) = app.shared.try_lock() {
+        let s = &st.bus.saa;
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(" Addr:   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:02X}  ", s.addr)),
+                Span::styled("Tone_EN:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:06b}  ", s.tone_enable)),
+                Span::styled("Noise_EN:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:06b}", s.noise_enable)),
+            ]),
+            Line::from(vec![
+                Span::styled(" Envelope:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!(" EG0: {}  EG1: {}",
+                    s.envelope_shape_str(0), s.envelope_shape_str(1))),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Ch ", Style::default().fg(Color::Yellow)),
+                Span::styled(" Freq(Hz) ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Amp L ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Amp R ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" T N", Style::default().fg(Color::DarkGray)),
+            ]),
+        ];
+
+        for ch in 0..6usize {
+            let freq  = s.channel_freq_hz(ch);
+            let amp_l = (s.amplitude[ch] & 0x0F) as usize;
+            let amp_r = (s.amplitude[ch] >> 4)   as usize;
+            let tone  = if s.channel_enabled(ch) { '●' } else { '·' };
+            let noise = if s.noise_on_channel(ch) { '●' } else { '·' };
+            // VU bar (0..15 → 0..8 chars)
+            let bar_l: String = "█".repeat(amp_l / 2).chars().take(8).collect();
+            let bar_r: String = "█".repeat(amp_r / 2).chars().take(8).collect();
+            let active = s.channel_enabled(ch) && amp_l.max(amp_r) > 0;
+            let style  = if active { Style::default().fg(Color::Cyan) }
+                         else      { Style::default().fg(Color::DarkGray) };
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {:1}  ", ch), Style::default().fg(Color::Yellow)),
+                Span::styled(format!("{:8.1}  ", freq), style),
+                Span::styled(format!("{:<8} ", bar_l), Style::default().fg(Color::Green)),
+                Span::styled(format!("{:<8} ", bar_r), Style::default().fg(Color::LightBlue)),
+                Span::styled(format!("{} {}", tone, noise), style),
+            ]));
+        }
+        lines
+    } else {
+        vec![Line::from(" [CPU thread běží] ")]
+    };
+
+    f.render_widget(
+        Paragraph::new(text)
+            .block(Block::default()
+                .title(" SAA1099 $CD00  (ISA DEV0) ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Magenta))),
         area,
     );
 }

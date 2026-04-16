@@ -17,6 +17,8 @@ use crate::rom::Rom;
 use crate::acia::Acia;
 use crate::via::Via;
 use crate::irq_latch::IrqLatch;
+use crate::tms9918a::Tms9918a;
+use crate::saa1099::Saa1099;
 
 // ── Address-decoder chip family ───────────────────────────────────────────────
 //
@@ -79,6 +81,8 @@ pub struct Bus {
     pub via1:        Via,        // $CC00-$CC7F — NMI
     pub via2:        Via,        // $CC80-$CCFF — IRQ1
     pub irq_latch:   IrqLatch,
+    pub vdp:         Tms9918a,  // $C000-$C001 (EXP_TMS9918A_V1 ISA)
+    pub saa:         Saa1099,   // $CD00-$CD01 (ISA DEV0)
     pub chip_family: ChipFamily,
 }
 
@@ -92,6 +96,8 @@ impl Bus {
             via1:        Via::new(true),   // drives NMI
             via2:        Via::new(false),  // drives IRQ
             irq_latch:   IrqLatch::new(),
+            vdp:         Tms9918a::default(),
+            saa:         Saa1099::default(),
             chip_family: ChipFamily::HCT,  // default — actual board uses 74HCT139
         }
     }
@@ -125,12 +131,13 @@ impl Bus {
         match addr {
             0x0000..=0x7FFF => self.ram_lo.read(addr),
             0x8000..=0xBFFF => self.ram_hi.read(addr),
-            0xC000..=0xC3FF => 0xFF, // VERA stub
+            0xC000..=0xC3FF => self.vdp.read(addr - 0xC000), // TMS9918A data/status
             0xC400..=0xC7FF => self.irq_latch.read(addr),
             0xC800..=0xCBFF => self.acia.read(addr),
             0xCC00..=0xCC7F => self.via1.read(addr - 0xCC00),
             0xCC80..=0xCCFF => self.via2.read(addr - 0xCC80),
-            0xCD00..=0xCFFF => 0xFF, // ISA stubs
+            0xCD00..=0xCDFF => self.saa.read(addr - 0xCD00), // SAA1099 (write-only → 0xFF)
+            0xCE00..=0xCFFF => 0xFF, // ISA DEV1/2 stubs
             0xD000..=0xDFFF => 0xFF,
             0xE000..=0xFFFF => self.rom.read(addr),
         }
@@ -140,12 +147,13 @@ impl Bus {
         match addr {
             0x0000..=0x7FFF => self.ram_lo.write(addr, val),
             0x8000..=0xBFFF => self.ram_hi.write(addr, val),
-            0xC000..=0xC3FF => {}    // VERA stub
+            0xC000..=0xC3FF => self.vdp.write(addr - 0xC000, val), // TMS9918A
             0xC400..=0xC7FF => self.irq_latch.write(addr, val),
             0xC800..=0xCBFF => self.acia.write(addr, val),
             0xCC00..=0xCC7F => self.via1.write(addr - 0xCC00, val),
             0xCC80..=0xCCFF => self.via2.write(addr - 0xCC80, val),
-            0xCD00..=0xCFFF => {}    // ISA stubs
+            0xCD00..=0xCDFF => self.saa.write(addr - 0xCD00, val), // SAA1099
+            0xCE00..=0xCFFF => {}    // ISA DEV1/2 stubs
             0xD000..=0xDFFF => {}
             0xE000..=0xFFFF => {}    // ROM — writes silently ignored
         }
@@ -155,13 +163,16 @@ impl Bus {
     /// Returns (nmi_line, irq_line).
     pub fn tick(&mut self, cycles: u32) -> (bool, bool) {
         let acia_irq = self.acia.tick(cycles);
+        let vdp_irq  = self.vdp.tick(cycles);
 
         let (via2_irq, _)  = self.via2.tick(cycles);
         let (_, via1_nmi)  = self.via1.tick(cycles);
 
         // Update IRQ latch
+        // IRQ0 = ACIA, IRQ1 = VIA2, IRQ2 = VDP (TMS9918A on ISA slot)
         if acia_irq { self.irq_latch.assert(0); } else { self.irq_latch.deassert(0); }
         if via2_irq { self.irq_latch.assert(1); } else { self.irq_latch.deassert(1); }
+        if vdp_irq  { self.irq_latch.assert(2); } else { self.irq_latch.deassert(2); }
 
         let irq = self.irq_latch.irq_active();
         (via1_nmi, irq)

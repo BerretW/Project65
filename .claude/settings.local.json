@@ -58,7 +58,11 @@
       "Bash(/c/Users/Alois/.cargo/bin/cargo build *)",
       "Bash(/c/Users/Alois/.cargo/bin/cargo clean *)",
       "Bash(cmd.exe /c build_minimal.bat)",
-      "Bash(powershell.exe -Command \"& cmd.exe /c 'build_minimal.bat' 2>&1\")"
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'build_minimal.bat' 2>&1\")",
+      "Bash(cargo check *)",
+      "Bash(ld65 -C chiptest.cfg -m output/chiptest.map output/chiptest.o -o output/chiptest.bin)",
+      "Bash(python bin2hex.py)",
+      "Bash(ca65 --cpu 65c02 chiptest.asm -o output/chiptest.o)"
     ]
   }
 }
