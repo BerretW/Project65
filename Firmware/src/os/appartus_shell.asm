@@ -44,6 +44,7 @@
 
 .export _os_main
 .export _IRQ_Event, _NMI_Event
+.import _basic_main
 
 ; ---------------------------------------------------------------------------
 ; BSS – OS buffers (in RAM, zeroed at startup by crt0)
@@ -195,12 +196,12 @@ _shell_loop:
     JMP _cmd_run
 @no_run:
 
-    ; MON
+    ; BASIC
     JSR _str_cmp_P
-    .byte "MON",0
-    BNE @no_mon
-    JMP _cmd_mon
-@no_mon:
+    .byte "BASIC",0
+    BNE @no_basic
+    JMP _cmd_basic
+@no_basic:
 
     ; RESET
     JSR _str_cmp_P
@@ -420,8 +421,8 @@ _cmd_run:
     JSR _acia_print_nl
     JMP _shell_loop
 
-_cmd_mon:
-    JSR _EWOZ
+_cmd_basic:
+    JSR _basic_main
     JMP _shell_loop
 
 _cmd_reset:
@@ -900,56 +901,44 @@ _strcpy_to_osname:
 RDF_RUN = $02
 
 str_banner:
-    .byte "AppartusOS v1.1  [Project65 / W65C02]",0
+    .byte "AppartusOS v1.1 [P65/W65C02]",0
 str_sub:
-    .byte "Type HELP for commands.",0
+    .byte "HELP for commands.",0
 str_prompt:
     .byte "> ",0
 str_version:
-    .byte "AppartusOS v1.1  2026  Project65 SBC",0
+    .byte "AppartusOS v1.1 2026",0
 str_rd_fmt:
-    .byte "RAMDisk unformatted - initialising...",0
+    .byte "RAMDisk init...",0
 str_help:
-    .byte "Commands:",13,10
-    .byte "  HELP / ?             - this list",13,10
-    .byte "  VER                  - OS version",13,10
-    .byte "  DIR                  - list RAMDisk files",13,10
-    .byte "  FREE                 - RAMDisk free space",13,10
-    .byte "  FORMAT               - reinitialise RAMDisk",13,10
-    .byte "  LOAD                 - receive Intel HEX via serial",13,10
-    .byte "  SAVE <n> <addr> <sz> - save RAM region to RAMDisk",13,10
-    .byte "  DEL  <name>          - delete file",13,10
-    .byte "  RUN  <name>          - run file from RAMDisk",13,10
-    .byte "  TYPE <name>          - print file/device to terminal",13,10
-    .byte "  HEXD <name>          - hex dump of file/device",13,10
-    .byte "  MON                  - EWOZ monitor",13,10
-    .byte "  RESET                - soft reset",13,10
-    .byte "Devices: CON  NULL  VIA1  VIA2",13,10,0
+    .byte "HELP VER DIR FREE FORMAT LOAD",13,10
+    .byte "SAVE DEL RUN TYPE HEXD BASIC RESET",13,10
+    .byte "SAVE <n> <addr> <sz>",13,10,0
 str_fmt_confirm:
-    .byte "Format RAMDisk? ALL DATA LOST. (Y/N): ",0
+    .byte "Format? ALL LOST. (Y/N): ",0
 str_fmt_done:
-    .byte "RAMDisk formatted.",0
+    .byte "Formatted.",0
 str_cancelled:
     .byte "Cancelled.",0
 str_load_wait:
-    .byte "Send Intel HEX now (ESC to abort)...",0
+    .byte "Send Intel HEX (ESC=abort)...",0
 str_load_ok:
-    .byte "HEX loaded OK.",0
+    .byte "HEX OK.",0
 str_load_warn:
-    .byte "HEX loaded with checksum errors.",0
+    .byte "?HEX chksum.",0
 str_save_ok:
     .byte "Saved.",0
 str_save_err:
-    .byte "Error: RAMDisk full or invalid parameters.",0
+    .byte "?RAMDisk full or bad args.",0
 str_del_ok:
     .byte "Deleted.",0
 str_notfound:
-    .byte "File not found.",0
+    .byte "Not found.",0
 str_run_err:
-    .byte "Run error: invalid entry.",0
+    .byte "?Run error.",0
 str_prog_ret:
-    .byte "Program returned.",0
+    .byte "Done.",0
 str_bad_args:
-    .byte "Bad arguments. Type HELP.",0
+    .byte "?Args.",0
 str_unknown:
-    .byte "Unknown command: ",0
+    .byte "?Cmd: ",0

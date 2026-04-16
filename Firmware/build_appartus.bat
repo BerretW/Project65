@@ -44,9 +44,6 @@ if errorlevel 1 ( echo CHYBA: ca65 stubs_min.asm & cd .. & exit /b 1 )
 ca65 --cpu 65c02 acia.asm           -o ..\output\acia.o            -l ..\lst\acia.lst
 if errorlevel 1 ( echo CHYBA: ca65 acia.asm & cd .. & exit /b 1 )
 
-ca65 --cpu 65c02 ewoz.asm           -o ..\output\ewoz.o            -l ..\lst\ewoz.lst
-if errorlevel 1 ( echo CHYBA: ca65 ewoz.asm & cd .. & exit /b 1 )
-
 ca65 --cpu 65c02 ihex.asm           -o ..\output\ihex.o            -l ..\lst\ihex.lst
 if errorlevel 1 ( echo CHYBA: ca65 ihex.asm & cd .. & exit /b 1 )
 
@@ -86,6 +83,9 @@ if errorlevel 1 ( echo CHYBA: ca65 appartus_shell.asm & cd .. & exit /b 1 )
 ca65 --cpu 65c02 os\appartus_jmptbl_ext.asm  -o ..\output\appartus_jmptbl_ext.o -l ..\lst\appartus_jmptbl_ext.lst
 if errorlevel 1 ( echo CHYBA: ca65 appartus_jmptbl_ext.asm & cd .. & exit /b 1 )
 
+ca65 --cpu 65c02 os\appartus_basic.asm       -o ..\output\appartus_basic.o      -l ..\lst\appartus_basic.lst
+if errorlevel 1 ( echo CHYBA: ca65 appartus_basic.asm & cd .. & exit /b 1 )
+
 REM Presun vygenerovane .s soubory
 move /Y *.s ..\output  1>nul
 
@@ -108,7 +108,6 @@ ld65 -C ..\config\appartus_os.cfg ^
      main_appartus.o ^
      stubs_min.o ^
      acia.o ^
-     ewoz.o ^
      ihex.o ^
      utils.o ^
      routines.o ^
@@ -121,6 +120,7 @@ ld65 -C ..\config\appartus_os.cfg ^
      appartus_ramdisk.o ^
      appartus_fileio.o ^
      appartus_shell.o ^
+     appartus_basic.o ^
      %CC65_LIB% ^
      -o APPARTUS_OS.bin
 if errorlevel 1 ( echo CHYBA: ld65 linker & cd .. & exit /b 1 )

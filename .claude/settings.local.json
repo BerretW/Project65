@@ -101,7 +101,14 @@
       "Bash(ca65 --cpu 65c02 ihex.asm -o ../output/ihex.o)",
       "Bash(ca65 --cpu 65c02 vectors.asm -o ../output/vectors.o)",
       "Bash(ca65 --cpu 65c02 interrupts.asm -o ../output/interrupts.o)",
-      "Bash(ca65 --cpu 65c02 zeropage.asm -o ../output/zeropage.o)"
+      "Bash(ca65 --cpu 65c02 zeropage.asm -o ../output/zeropage.o)",
+      "Bash(cmd /c build_appartus.bat)",
+      "Bash(ca65 --cpu 65c02 os/appartus_basic.asm -o ../output/appartus_basic.o -l ../lst/appartus_basic.lst)",
+      "Bash(node -e ' *)",
+      "Bash(ca65 --cpu 65c02 os/appartus_basic.asm -o ../output/appartus_basic.o)",
+      "Bash(cmd.exe /c \"cd /d c:\\\\Users\\\\adolf\\\\GIT\\\\Project65\\\\Firmware && build_appartus.bat\")",
+      "Bash(ca65 --cpu 65c02 main_appartus.c -o /dev/null)",
+      "Bash(echo \"cc65 done: $?\")"
     ]
   }
 }
