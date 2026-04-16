@@ -23,15 +23,13 @@ _NMI_ISR:         PHA
                   RTI
 
 
-_IRQ_ISR:         SEI
-                  PHA
+_IRQ_ISR:         PHA
                   PHX
                   PHY
                   ;LDA #$FF
                   ;STA VIA1_T1C_H
                   JSR _IRQ_Event
-                  CLI
                   PLY
                   PLX
                   PLA
-                  RTI
+                  RTI         ; RTI obnoví I-flag ze zásobníku — CLI před RTI bylo špatně

@@ -56,7 +56,9 @@
       "Read(//c/Users/Alois/.cargo/bin//**)",
       "Read(//c/Users/Alois/.cargo/bin/**)",
       "Bash(/c/Users/Alois/.cargo/bin/cargo build *)",
-      "Bash(/c/Users/Alois/.cargo/bin/cargo clean *)"
+      "Bash(/c/Users/Alois/.cargo/bin/cargo clean *)",
+      "Bash(cmd.exe /c build_minimal.bat)",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'build_minimal.bat' 2>&1\")"
     ]
   }
 }

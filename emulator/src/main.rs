@@ -72,7 +72,7 @@ fn main() {
         }
     }
 
-    let shared = Arc::new(Mutex::new(SharedState::new(bus)));
+    let shared   = Arc::new(Mutex::new(SharedState::new(bus)));
     let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
 
     // ── TCP virtual serial port thread ────────────────────────────────────
@@ -98,7 +98,7 @@ fn main() {
         lock.speed_hz = cli.speed;
     }
 
-    let mut app = App::new(Arc::clone(&shared), cmd_tx.clone());
+    let mut app = App::new(Arc::clone(&shared), Arc::clone(&acia_io), cmd_tx.clone());
     app.speed_hz = cli.speed;
 
     if let Err(e) = app::run(&mut app) {

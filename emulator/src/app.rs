@@ -46,6 +46,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::acia::AciaIo;
 use crate::cpu::CpuState;
 use crate::bus::Bus;
 
@@ -273,6 +274,7 @@ pub enum Modal {
 
 pub struct App {
     pub shared:      Arc<Mutex<SharedState>>,
+    pub acia_io:     Arc<Mutex<AciaIo>>,   // přímý přístup bez shared — nesmí blokovat CPU
     pub cmd_tx:      std::sync::mpsc::Sender<Cmd>,
 
     // Serial terminal
@@ -292,10 +294,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(shared: Arc<Mutex<SharedState>>, cmd_tx: std::sync::mpsc::Sender<Cmd>) -> Self {
+    pub fn new(
+        shared:  Arc<Mutex<SharedState>>,
+        acia_io: Arc<Mutex<AciaIo>>,
+        cmd_tx:  std::sync::mpsc::Sender<Cmd>,
+    ) -> Self {
         let speed = shared.lock().unwrap().speed_hz;
         Self {
             shared,
+            acia_io,
             cmd_tx,
             term_lines: VecDeque::with_capacity(1000),
             term_cur: String::new(),
@@ -309,13 +316,12 @@ impl App {
         }
     }
 
+    /// Přečte ACIA TX buffer přímo — nečeká na `shared` mutex (CPU ho drží při běhu).
     pub fn drain_acia(&mut self) {
-        let bytes: Vec<u8> = {
-            if let Ok(st) = self.shared.try_lock() {
-                if let Ok(mut io) = st.bus.acia.io.try_lock() {
-                    io.tx_buf.drain(..).collect()
-                } else { vec![] }
-            } else { vec![] }
+        let bytes: Vec<u8> = if let Ok(mut io) = self.acia_io.try_lock() {
+            io.tx_buf.drain(..).collect()
+        } else {
+            return;
         };
         for b in bytes {
             match b {
@@ -330,11 +336,10 @@ impl App {
         }
     }
 
+    /// Pošle bajt do ACIA RX přímo — funguje i když CPU drží `shared` mutex.
     pub fn send_key(&self, b: u8) {
-        if let Ok(st) = self.shared.try_lock() {
-            if let Ok(mut io) = st.bus.acia.io.try_lock() {
-                io.rx_buf.push_back(b);
-            }
+        if let Ok(mut io) = self.acia_io.lock() {
+            io.rx_buf.push_back(b);
         }
     }
 
