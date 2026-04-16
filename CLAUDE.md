@@ -132,21 +132,74 @@ Q1 1,8432 MHz — přiveden přímo do ACIA (přesné baudové rychlosti).
 
 ---
 
-## Firmware — minimal build
+## Firmware — přehled buildů
+
+### Minimal build
 
 **Soubory:** `build_minimal.bat` → `config/MIN_ROM.cfg` → `output/MIN_ROM.bin`
 
-**Paměťová mapa linkeru (MIN_ROM.cfg):**
+**Obsah:** ACIA serial + WozMon (EWOZ) + sériový bootloader do $6000.  
+Klávesnice, VDP, SPI, SD, GameDuino, SAA1099 — **v minimal buildu nejsou**.
+
+---
+
+### AppartusOS build
+
+**Soubory:** `build_appartus.bat` → `config/appartus_os.cfg` → `output/APPARTUS_OS.bin`
+
+**Obsah:** ACIA serial + EWOZ (příkaz `MON`) + ihex loader + interaktivní shell + RAMDisk FS.
+
+**Paměťová mapa linkeru (obě konfigurace totožné):**
 ```
-ZP:  $0000–$00FF   (zero page)
+ZP:  $0000–$00FF   (zero page; cc65 $00–$1F, EWOZ $24–$30, ihex $38–$3E, OS $40–$4E)
 RAM: $0200–$5FFF   (pracovní RAM, stack na $5FFF roste dolů)
 ROM: $E000–$FFFF   (EEPROM, fill $FF)
-JMPTBL: $FF00      (jump tabulka)
+JMPTBL: $FF00      (jump tabulka — viz níže)
 VECTORS: $FFFA     (NMI/RESET/IRQ vektory)
 ```
 
-**Obsah minimal buildu:** ACIA serial + WozMon (EWOZ) + sériový bootloader do $6000.  
-Klávesnice, VDP, SPI, SD, GameDuino, SAA1099 — **v minimal buildu nejsou**.
+**RAMDisk ($6000–$BFFF = 24 KB, správa za běhu):**
+```
+IC6 horní polovina ($6000–$7FFF) + celý IC7 ($8000–$BFFF)
+
+$6000–$600F   Header "APOS" + num_files (1 B) + free_ptr (2 B) + reserved
+$6010–$610F   Adresář: 16 záznamů × 16 bajtů = 256 B
+              +0  name[8]   +8  load_addr   +10 size   +12 flags   +13 stor_addr
+$6110–$BFFF   Data souborů (~24 KB, $5EF0 bajtů)
+```
+Flagy: `RDF_VALID=$01`, `RDF_RUN=$02`.
+
+**Shell příkazy AppartusOS:**
+```
+HELP / ?                   – nápověda
+VER                        – verze OS
+DIR                        – výpis souborů RAMDisku
+FREE                       – volné místo
+FORMAT                     – reinicializace RAMDisku (s potvrzením Y)
+LOAD                       – příjem Intel HEX přes ACIA (používá ihex.asm)
+SAVE <jméno> <addr> <size> – uložení oblasti RAM do RAMDisku (hex adresy 4 cifry)
+DEL  <jméno>               – smazání souboru
+RUN  <jméno>               – spuštění souboru (program může RTS zpět do shellu)
+MON                        – EWOZ / WozMon monitor
+RESET                      – soft reset ($FF00)
+```
+
+**Typický workflow:**
+```
+> LOAD              ← pošli Intel HEX přes serial (libovolná adresa)
+> SAVE HELLO 6090 0100   ← ulož 256 B od $6090 jako "HELLO"
+> DIR
+> RUN HELLO
+```
+
+**Moduly AppartusOS** (`Firmware/src/os/`):
+
+- `appartus_zp.asm` — ZP proměnné OS ($40–$4E)
+- `appartus_ramdisk.asm` — FS rutiny (_rd_init/check/find/list/save/del/run/free/memcpy)
+- `appartus_shell.asm` — shell smyčka + _os_main + IRQ/NMI Event stubs
+- `appartus_jmptbl_ext.asm` — rozšíření jump table ($FF33–$FF4D)
+
+**API pro uživatelské programy:** `Firmware/src/kernel_api.inc`
 
 ---
 

@@ -19,7 +19,7 @@ Závislosti: pip install pyserial
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, scrolledtext, messagebox
+from tkinter import ttk, filedialog, messagebox
 import serial
 import serial.tools.list_ports
 import threading
@@ -109,6 +109,192 @@ class TcpConn:
 
 
 # ---------------------------------------------------------------------------
+# WozMon-style terminálový widget
+# ---------------------------------------------------------------------------
+
+class TerminalWidget(tk.Frame):
+    """
+    Interaktivní terminál stylizovaný jako WozMon / Apple-1.
+
+    Přímý vstup přímo do plochy terminálu:
+      - Znaky se okamžitě zobrazí (lokální echo), automaticky uppercase.
+      - Backspace maže poslední zadaný znak.
+      - Enter odešle celý řádek s CR.
+      - ^R odešle byte $12 (soft restart bootloaderu).
+      - ^C odešle byte $03.
+
+    Příchozí data jsou vkládána před aktuálně rozepsaný vstup; zvládá
+    CR, LF, CRLF a BS (0x08) ze vzdálené strany.
+    """
+
+    def __init__(self, parent, send_callback=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._send_cb = send_callback
+        self._input_buf: list[str] = []
+
+        self._text = tk.Text(
+            self,
+            bg="#000000", fg="#c8ffc8",
+            insertbackground="#c8ffc8",
+            selectbackground="#1a4a1a",
+            font=("Courier New", 10),
+            wrap="char",
+            width=64, height=20,
+            relief="flat",
+            cursor="xterm",
+            exportselection=True,
+        )
+        vsb = ttk.Scrollbar(self, orient="vertical", command=self._text.yview)
+        self._text.config(yscrollcommand=vsb.set)
+        self._text.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # Barevné tagy
+        self._text.tag_config("rx",    foreground="#c8ffc8")   # příjem – fosforová zelená
+        self._text.tag_config("tx",    foreground="#ffffff")   # lokální echo – bílá
+        self._text.tag_config("info",  foreground="#4a9a4a")   # systémové zprávy
+        self._text.tag_config("error", foreground="#cc4444")   # chyby – červená
+        self._text.tag_config("prog",  foreground="#9acd9a")   # průběh nahrávání
+
+        self._text.config(state="disabled")
+
+        # Focus kliknutím
+        self._text.bind("<Button-1>", lambda e: self._text.focus_set())
+
+        # Klávesové zkratky — vše zachytit, nic nepustit do widgetu
+        self._text.bind("<Key>",       self._on_key)
+        self._text.bind("<BackSpace>", self._on_backspace)
+        self._text.bind("<Return>",    self._on_enter)
+        self._text.bind("<KP_Enter>",  self._on_enter)
+        self._text.bind("<Delete>",    lambda e: "break")
+        self._text.bind("<Control-c>", self._on_ctrl_c)
+        self._text.bind("<Control-r>", self._on_ctrl_r)
+        # Šipky a PgUp/PgDn — nechme scrollovat, ale ne pohybovat kurzorem
+        for key in ("<Left>", "<Right>", "<Up>", "<Down>", "<Home>", "<End>"):
+            self._text.bind(key, lambda e: "break")
+
+    # ── veřejné API ─────────────────────────────────────────────────────────
+
+    def append_rx(self, text: str):
+        """Vlož přijatá data — před aktuálně rozepsaný vstup."""
+        if not text:
+            return
+        processed = self._process_rx(text)
+        if not processed:
+            return
+        self._text.config(state="normal")
+        n = len(self._input_buf)
+        if n:
+            # Dočasně odstraň rozepsaný vstup, vlož RX, obnov vstup
+            self._text.delete(f"end-{n + 1}c", "end-1c")
+            self._text.insert(tk.END, processed, "rx")
+            self._text.insert(tk.END, "".join(self._input_buf), "tx")
+        else:
+            self._text.insert(tk.END, processed, "rx")
+        self._text.see(tk.END)
+        self._text.config(state="disabled")
+
+    def log(self, msg: str, tag: str = "info"):
+        """Vlož lokální systémovou zprávu (info / error / prog)."""
+        self._text.config(state="normal")
+        n = len(self._input_buf)
+        if n:
+            self._text.delete(f"end-{n + 1}c", "end-1c")
+            self._text.insert(tk.END, msg, tag)
+            self._text.insert(tk.END, "".join(self._input_buf), "tx")
+        else:
+            self._text.insert(tk.END, msg, tag)
+        self._text.see(tk.END)
+        self._text.config(state="disabled")
+
+    def clear(self):
+        self._text.config(state="normal")
+        self._text.delete("1.0", tk.END)
+        self._text.config(state="disabled")
+        self._input_buf.clear()
+
+    def focus(self):
+        self._text.focus_set()
+
+    # ── zpracování příchozích dat ────────────────────────────────────────────
+
+    def _process_rx(self, raw: str) -> str:
+        """CR / LF / CRLF / BS z příchozího streamu → čistý výstup."""
+        out: list[str] = []
+        i = 0
+        while i < len(raw):
+            c = raw[i]
+            if c == "\r":
+                if i + 1 < len(raw) and raw[i + 1] == "\n":
+                    out.append("\n")
+                    i += 2
+                    continue
+                else:
+                    out.append("\n")
+            elif c == "\n":
+                out.append("\n")
+            elif c == "\x08":   # BS — smaž poslední zobrazený znak
+                if out:
+                    out.pop()
+            elif c == "\x07":   # BEL — ignoruj
+                pass
+            elif c >= " " or c == "\t":
+                out.append(c)
+            i += 1
+        return "".join(out)
+
+    # ── obsluha kláves ───────────────────────────────────────────────────────
+
+    def _on_key(self, event):
+        if event.char and (event.char.isprintable() or event.char == " "):
+            ch = event.char.upper()   # WozMon — vždy uppercase
+            self._input_buf.append(ch)
+            self._text.config(state="normal")
+            self._text.insert(tk.END, ch, "tx")
+            self._text.see(tk.END)
+            self._text.config(state="disabled")
+        return "break"
+
+    def _on_backspace(self, event):
+        if self._input_buf:
+            self._input_buf.pop()
+            self._text.config(state="normal")
+            self._text.delete("end-2c", "end-1c")
+            self._text.config(state="disabled")
+        return "break"
+
+    def _on_enter(self, event):
+        line = "".join(self._input_buf)
+        self._input_buf.clear()
+        self._text.config(state="normal")
+        self._text.insert(tk.END, "\n", "tx")
+        self._text.see(tk.END)
+        self._text.config(state="disabled")
+        if self._send_cb and line:
+            self._send_cb(line)
+        return "break"
+
+    def _on_ctrl_c(self, event):
+        if self._send_cb:
+            self._send_cb("\x03")
+        return "break"
+
+    def _on_ctrl_r(self, event):
+        # Vymaž rozepsaný vstup a pošli ^R
+        n = len(self._input_buf)
+        if n:
+            self._text.config(state="normal")
+            self._text.delete(f"end-{n + 1}c", "end-1c")
+            self._text.config(state="disabled")
+            self._input_buf.clear()
+        if self._send_cb:
+            self._send_cb("\x12")
+        return "break"
+
+
+# ---------------------------------------------------------------------------
 class P65Uploader:
     def __init__(self, root: tk.Tk):
         self.root  = root
@@ -136,7 +322,6 @@ class P65Uploader:
         frm_conn = ttk.LabelFrame(self.root, text="Připojení")
         frm_conn.grid(row=0, column=0, columnspan=2, sticky="ew", **PAD)
 
-        # Volba režimu
         self.mode_var = tk.StringVar(value="com")
         ttk.Radiobutton(frm_conn, text="COM port", variable=self.mode_var,
                         value="com", command=self._on_mode_change
@@ -163,7 +348,7 @@ class P65Uploader:
         # TCP pole
         self.frm_tcp = ttk.Frame(frm_conn)
         self.frm_tcp.grid(row=1, column=0, columnspan=2, sticky="ew")
-        self.frm_tcp.grid_remove()   # skryto při startu
+        self.frm_tcp.grid_remove()
 
         ttk.Label(self.frm_tcp, text="Host:").grid(row=0, column=0, **PAD)
         self.tcp_host_var = tk.StringVar(value=DEFAULT_TCP_HOST)
@@ -221,30 +406,20 @@ class P65Uploader:
                 btn.configure(style=f"{fg}.TButton")
 
         # ── Terminál ────────────────────────────────────────────────────────
-        frm_term = ttk.LabelFrame(self.root, text="Terminál")
+        frm_term = ttk.LabelFrame(
+            self.root,
+            text="Terminál  [přímý vstup · Enter = odeslat · Backspace · ^R = restart]",
+        )
         frm_term.grid(row=3, column=0, columnspan=2, sticky="nsew", **PAD)
 
-        self.txt_term = scrolledtext.ScrolledText(
-            frm_term, width=62, height=18,
-            bg="#1e1e1e", fg="#d4d4d4",
-            insertbackground="white",
-            font=("Consolas", 10),
-            state="disabled",
-        )
-        self.txt_term.grid(row=0, column=0, columnspan=3, **PAD)
-        self.txt_term.tag_config("tx",    foreground="#569cd6")
-        self.txt_term.tag_config("info",  foreground="#6a9955")
-        self.txt_term.tag_config("error", foreground="#f44747")
-        self.txt_term.tag_config("prog",  foreground="#ce9178")
+        self.terminal = TerminalWidget(frm_term, send_callback=self._terminal_send)
+        self.terminal.grid(row=0, column=0, columnspan=2, sticky="nsew",
+                           padx=6, pady=(4, 0))
+        frm_term.grid_columnconfigure(0, weight=1)
 
-        self.input_var = tk.StringVar()
-        ent_input = ttk.Entry(frm_term, textvariable=self.input_var, width=50)
-        ent_input.grid(row=1, column=0, padx=6, pady=(0, 4), sticky="ew")
-        ent_input.bind("<Return>", self._send_line)
-        ttk.Button(frm_term, text="Odeslat",
-                   command=self._send_line).grid(row=1, column=1, padx=(0, 4))
         ttk.Button(frm_term, text="Vymazat",
-                   command=self._clear_term).grid(row=1, column=2, padx=(0, 4))
+                   command=self.terminal.clear).grid(
+            row=1, column=1, padx=(0, 6), pady=(2, 4), sticky="e")
 
         style = ttk.Style()
         style.configure("green.TButton", foreground="darkgreen")
@@ -300,6 +475,7 @@ class P65Uploader:
             self.btn_connect.config(text="Odpojit")
             self.btn_upload.config(state="normal")
             self._log(f"Připojeno: {desc}\n", "info")
+            self.terminal.focus()
 
         except (serial.SerialException, OSError, ValueError) as e:
             messagebox.showerror("Chyba připojení", str(e))
@@ -325,7 +501,6 @@ class P65Uploader:
                 self.rx_queue.put(data)
             else:
                 time.sleep(0.01)
-        # Pokud se TCP odpojilo ze strany serveru, informuj UI
         if self.running:
             self.running = False
             self.root.after(0, self._on_remote_disconnect)
@@ -344,43 +519,30 @@ class P65Uploader:
             while True:
                 data = self.rx_queue.get_nowait()
                 text = data.decode("ascii", errors="replace")
-                self._append_term(text)
+                self.terminal.append_rx(text)
         except queue.Empty:
             pass
         finally:
             self.root.after(50, self._poll_rx)
 
     # -----------------------------------------------------------------------
-    # Terminál
+    # Terminál — pomocné metody
     # -----------------------------------------------------------------------
     def _log(self, msg: str, tag: str = "info"):
-        self.txt_term.config(state="normal")
-        self.txt_term.insert(tk.END, msg, tag)
-        self.txt_term.see(tk.END)
-        self.txt_term.config(state="disabled")
-
-    def _append_term(self, text: str, tag: str = ""):
-        self.txt_term.config(state="normal")
-        self.txt_term.insert(tk.END, text, tag)
-        self.txt_term.see(tk.END)
-        self.txt_term.config(state="disabled")
+        self.terminal.log(msg, tag)
 
     def _clear_term(self):
-        self.txt_term.config(state="normal")
-        self.txt_term.delete("1.0", tk.END)
-        self.txt_term.config(state="disabled")
+        self.terminal.clear()
 
     # -----------------------------------------------------------------------
-    # Vstup
+    # Vstup z terminálu
     # -----------------------------------------------------------------------
-    def _send_line(self, event=None):
-        if not self._is_connected():
+    def _terminal_send(self, text: str):
+        """Odeslání řádku zadaného přímo v terminálu (Enter)."""
+        if not (self.conn and self.conn.is_open):
+            self._log("Nejprve se připoj.\n", "error")
             return
-        text = self.input_var.get()
-        self.input_var.set("")
-        if text:
-            self.conn.write((text + "\r").encode("ascii", errors="replace"))
-            self._log(text + "\n", "tx")
+        self.conn.write((text + "\r").encode("ascii", errors="replace"))
 
     def _send_byte(self, b: bytes):
         if self._is_connected():
@@ -392,17 +554,17 @@ class P65Uploader:
     def _cmd_start(self):
         if not self._is_connected(): return
         self._send_byte(b"s")
-        self._log("→ s  (spuštění z $6000)\n", "tx")
+        self._log("→ S  (spuštění z $6000)\n", "info")
 
     def _cmd_monitor(self):
         if not self._is_connected(): return
         self._send_byte(b"m")
-        self._log("→ m  (EWOZ / WozMon)\n", "tx")
+        self._log("→ M  (EWOZ / WozMon)\n", "info")
 
     def _cmd_reset(self):
         if not self._is_connected(): return
         self._send_byte(b"\x12")
-        self._log("→ ^R (soft restart)\n", "tx")
+        self._log("→ ^R (soft restart)\n", "info")
 
     # -----------------------------------------------------------------------
     # Výběr souboru
@@ -490,7 +652,7 @@ class P65Uploader:
                 data = f.read()
 
             self.conn.write(b"w")
-            self.root.after(0, self._log, "→ w  (čekám na bootloader…)\n", "tx")
+            self.root.after(0, self._log, "→ W  (čekám na bootloader…)\n", "info")
             time.sleep(0.3)
 
             sent = 0
@@ -542,7 +704,7 @@ class P65Uploader:
                             {"maximum": total, "value": 0})
             self.root.after(
                 0, self._log,
-                f"→ h  (Intel HEX, {data_recs} záznamů, {total} B)\n", "tx",
+                f"→ H  (Intel HEX, {data_recs} záznamů, {total} B)\n", "info",
             )
 
             self.conn.write(b"h")

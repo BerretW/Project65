@@ -62,7 +62,29 @@
       "Bash(cargo check *)",
       "Bash(ld65 -C chiptest.cfg -m output/chiptest.map output/chiptest.o -o output/chiptest.bin)",
       "Bash(python bin2hex.py)",
-      "Bash(ca65 --cpu 65c02 chiptest.asm -o output/chiptest.o)"
+      "Bash(ca65 --cpu 65c02 chiptest.asm -o output/chiptest.o)",
+      "Bash(cmd.exe /c build_appartus.bat)",
+      "Bash(cmd.exe /c \"build_appartus.bat 2>&1\")",
+      "Bash(build_appartus.bat)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(cmd /c \"build_appartus.bat\")",
+      "Bash(ca65 --cpu 65c02 os/appartus_zp.asm -o ../output/appartus_zp.o)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(ca65 --cpu 65c02 os/appartus_ramdisk.asm -o ../output/appartus_ramdisk.o)",
+      "Bash(ca65 --cpu 65c02 os/appartus_shell.asm -o ../output/appartus_shell.o)",
+      "Bash(ca65 --cpu 65c02 os/appartus_jmptbl_ext.asm -o ../output/appartus_jmptbl_ext.o)",
+      "Bash(echo \"EXT:$?\")",
+      "Bash(cc65 -t none -O --cpu 65C02 main_appartus.c)",
+      "Bash(echo \"CC:$?\")",
+      "Bash(ca65 --cpu 65c02 main_appartus.s -o ../output/main_appartus.o)",
+      "Bash(echo \"MAIN:$?\")",
+      "Bash(move /Y *.s ../output)",
+      "Bash(ld65 -C ../config/appartus_os.cfg -m appartus_os.map crt0_p65.o main_appartus.o stubs_min.o acia.o ewoz.o ihex.o utils.o routines.o vectors.o interrupts.o zeropage.o jumptable.o appartus_jmptbl_ext.o appartus_zp.o appartus_ramdisk.o appartus_shell.o /c/CC65/lib/none.lib -o APPARTUS_OS.bin)",
+      "Bash(echo \"LINK:$?\")",
+      "Bash(cc65 -t none -O --cpu 65C02 main_min.c)",
+      "Bash(ca65 --cpu 65c02 main_min.s -o ../output/main_min.o)",
+      "Bash(echo \"ASM:$?\")",
+      "Bash(echo \"RD:$?\")"
     ]
   }
 }

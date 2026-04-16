@@ -87,7 +87,7 @@ _EWOZ:       CLD ;Clear decimal arithmetic mode.
 CLI
 LDA #$1F        ;* Init ACIA to 19200 Baud.
 STA ACIA_CTRL
-LDA #$09        ;* No Parity, RX IRQ disabled (bit1=0 = RIM=00 per R6551).
+LDA #$0B        ;* No Parity, RX IRQ disabled (bit1=0 = RIM=00 per R6551).
 STA ACIA_CMD    ;* $0B would enable RX IRQ → IRQ storm when EWOZ polls ACIA.
          LDA #$0D
          JSR ECHO      ;* New line.
