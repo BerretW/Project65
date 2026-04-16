@@ -1,0 +1,14 @@
+[package]
+name = "p65emu"
+version = "0.1.0"
+edition = "2021"
+description = "Project65 SBC 65C02 Emulator"
+
+[[bin]]
+name = "p65emu"
+path = "src/main.rs"
+
+[dependencies]
+ratatui   = "0.28"
+crossterm = "0.28"
+clap      = { version = "4", features = ["derive"] }

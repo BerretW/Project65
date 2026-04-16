@@ -51,7 +51,12 @@
       "Bash(ca65 --cpu 65c02 \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/ramtest.asm\" -o \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/output/ramtest.o\" -l \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/output/ramtest.lst\")",
       "Bash(ld65 -C \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/ramtest.cfg\" -m \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/output/ramtest.map\" \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/output/ramtest.o\" -o \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/output/ramtest.bin\")",
       "Bash(python \"c:/Users/adolf/GIT/Project65/Firmware/ramtest/bin2hex.py\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('c:/Users/adolf/GIT/Project65/tools/uploader.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('c:/Users/adolf/GIT/Project65/tools/uploader.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(cargo build *)",
+      "Read(//c/Users/Alois/.cargo/bin//**)",
+      "Read(//c/Users/Alois/.cargo/bin/**)",
+      "Bash(/c/Users/Alois/.cargo/bin/cargo build *)",
+      "Bash(/c/Users/Alois/.cargo/bin/cargo clean *)"
     ]
   }
 }
