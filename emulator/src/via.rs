@@ -50,13 +50,13 @@ pub struct Via {
 
     // Timer 1
     pub t1_counter: u16,
-    t1_latch: u16,
-    t1_running: bool,
+    pub t1_latch:   u16,
+    pub t1_running: bool,
 
     // Timer 2
-    pub t2_counter: u16,
-    t2_latch_lo: u8,
-    t2_running: bool,
+    pub t2_counter:  u16,
+    pub t2_latch_lo: u8,
+    pub t2_running:  bool,
 
     // Which interrupt line this VIA drives
     // false = drives CPU IRQ, true = drives CPU NMI

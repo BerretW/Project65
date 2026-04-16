@@ -48,7 +48,7 @@ use ratatui::{
 
 use crate::acia::AciaIo;
 use crate::cpu::CpuState;
-use crate::bus::Bus;
+use crate::bus::{Bus, TimingStatus};
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 
@@ -86,6 +86,9 @@ pub enum Cmd {
     /// Load `data` into memory starting at `addr`.
     /// If `reset` is true, CPU is reset after loading.
     LoadAt { data: Vec<u8>, addr: u16, reset: bool },
+    /// Set a single CPU register.
+    /// field: 0=A 1=X 2=Y 3=SP 4=PC 5=P
+    SetReg { field: u8, val: u16 },
     Quit,
 }
 
@@ -117,6 +120,26 @@ impl MemTab {
             MemTab::Io     => 0xC000,
             MemTab::Rom    => 0xE000,
             MemTab::Custom => custom,
+        }
+    }
+}
+
+// ── Right-panel tabs ─────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum RightTab { Cpu, Via1, Via2, Acia, Irq }
+
+impl RightTab {
+    const ALL: &'static [RightTab] =
+        &[RightTab::Cpu, RightTab::Via1, RightTab::Via2, RightTab::Acia, RightTab::Irq];
+
+    fn label(self) -> &'static str {
+        match self {
+            RightTab::Cpu  => " CPU ",
+            RightTab::Via1 => " VIA1 ",
+            RightTab::Via2 => " VIA2 ",
+            RightTab::Acia => " ACIA ",
+            RightTab::Irq  => " IRQ ",
         }
     }
 }
@@ -268,6 +291,10 @@ pub enum Modal {
         custom_buf: Option<String>,
     },
     GotoAddr { buf: String },
+    /// Edit a single memory byte: phase=false → enter addr, phase=true → enter value.
+    EditMem { addr_buf: String, val_buf: String, phase: bool },
+    /// Edit CPU registers: sel = register index (0=A…5=P).
+    EditReg { sel: usize, val_buf: String },
 }
 
 // ── App state ─────────────────────────────────────────────────────────────────
@@ -289,6 +316,7 @@ pub struct App {
 
     pub speed_hz:    u64,
     pub status_msg:  String,
+    pub right_tab:   RightTab,
 
     pub modal:       Modal,
 }
@@ -311,7 +339,8 @@ impl App {
             mem_scroll: 0,
             custom_addr: 0x0000,
             speed_hz: speed,
-            status_msg: "Ready  F3=Run  F2=Step  F4=Reset  Ctrl+O=Open ROM  F10=Quit".into(),
+            status_msg: "F3=Run F2=Step F4=Reset Ctrl+O=ROM Ctrl+M=EditMem Ctrl+R=EditReg ShiftTab=Panel F10=Quit".into(),
+            right_tab: RightTab::Cpu,
             modal: Modal::None,
         }
     }
@@ -323,15 +352,55 @@ impl App {
         } else {
             return;
         };
-        for b in bytes {
+
+        // EWOZ ECHO stripuje bit 7 (AND #$7F) před zápisem do ACIA,
+        // takže dostáváme standardní 7-bit ASCII.
+        // Odřádkování: EWOZ posílá pouze CR (0x0D) — LF (0x0A) se nepoužívá.
+        // Backspace: EWOZ posílá sekvenci BS(0x08) + SPACE(0x20) + BS(0x08).
+        //   → jednoduché řešení: BS = pop, přeskočit mezeru POUZE pokud předcházel BS.
+
+        let mut prev_was_bs = false;
+
+        for raw in bytes {
+            let b = raw & 0x7F; // strip bit 7 pro jistotu
             match b {
-                b'\n' => {
+                0x0D => {
+                    // CR → odřádkování (EWOZ newline)
                     let line = std::mem::take(&mut self.term_cur);
                     if self.term_lines.len() >= 500 { self.term_lines.pop_front(); }
                     self.term_lines.push_back(line);
+                    // auto-scroll na konec pokud uživatel nestroloval nahoru
+                    if self.term_scroll == 0 { /* already at bottom */ }
+                    prev_was_bs = false;
                 }
-                b'\r' => {}
-                c => self.term_cur.push(c as char),
+                0x0A => {
+                    // LF → odřádkování (jen pokud nepředcházel CR, aby se předešlo dvojitému \r\n)
+                    if !prev_was_bs {
+                        let line = std::mem::take(&mut self.term_cur);
+                        if self.term_lines.len() >= 500 { self.term_lines.pop_front(); }
+                        self.term_lines.push_back(line);
+                    }
+                    prev_was_bs = false;
+                }
+                0x08 | 0x7F => {
+                    // BS nebo DEL → smaž poslední znak aktuálního řádku
+                    self.term_cur.pop();
+                    prev_was_bs = true;
+                }
+                0x20 if prev_was_bs => {
+                    // SPACE bezprostředně po BS = část EWOZ BS-sekvence (BS·SPC·BS)
+                    // → přeskočíme, nebudeme psát mezeru
+                    // prev_was_bs necháme true, druhý BS v sekvenci pak smaže znovu
+                    // (ale term_cur je již prázdnější o 1, takže druhý BS nic neudělá)
+                }
+                c if c < 0x20 => {
+                    // ostatní řídicí znaky ignoruj (BEL, TAB bez rozšíření atd.)
+                    prev_was_bs = false;
+                }
+                c => {
+                    self.term_cur.push(c as char);
+                    prev_was_bs = false;
+                }
             }
         }
     }
@@ -381,27 +450,38 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Modal overlays (rendered last = on top)
     match &app.modal {
-        Modal::FileBrowser(_)   => draw_file_browser(f, app, size),
+        Modal::FileBrowser(_)    => draw_file_browser(f, app, size),
         Modal::LoadTarget { .. } => draw_load_target(f, app, size),
-        Modal::GotoAddr { .. }  => draw_goto_addr(f, app, size),
+        Modal::GotoAddr { .. }   => draw_goto_addr(f, app, size),
+        Modal::EditMem { .. }    => draw_edit_mem(f, app, size),
+        Modal::EditReg { .. }    => draw_edit_reg(f, app, size),
         Modal::None => {}
     }
 }
 
 fn draw_title(f: &mut Frame, app: &App, area: Rect) {
-    let (running, spd, cycles, pc) = {
+    let (running, spd, cycles, pc, family_name, timing) = {
         match app.shared.try_lock() {
-            Ok(st) => (st.running, st.speed_hz, st.cpu.cycles, st.cpu.pc),
-            Err(_) => (false, app.speed_hz, 0, 0),
+            Ok(st) => {
+                let ts = st.bus.timing_status(st.speed_hz);
+                (st.running, st.speed_hz, st.cpu.cycles, st.cpu.pc,
+                 st.bus.chip_family.name(), ts)
+            }
+            Err(_) => (false, app.speed_hz, 0, 0, "???", TimingStatus::Ok),
         }
     };
     let state = if running { "▶ RUN " } else { "⏸ PAUSE" };
+    let (timing_str, timing_color) = match timing {
+        TimingStatus::Ok       => (format!("[{} OK]",    family_name), Color::Green),
+        TimingStatus::Marginal => (format!("[{} ~MRG]",  family_name), Color::Yellow),
+        TimingStatus::Fail     => (format!("[{} SLOW!]", family_name), Color::Red),
+    };
     let title = format!(
-        " Project65 Emulator │ {} │ {} │ PC:{:04X} │ Cycles:{}",
-        state, fmt_hz(spd), pc, cycles
+        " Project65 │ {} │ {} │ PC:{:04X} │ Cycles:{} │ {}",
+        state, fmt_hz(spd), pc, cycles, timing_str
     );
     f.render_widget(
-        Paragraph::new(title).style(Style::default().bg(Color::DarkGray).fg(Color::White)),
+        Paragraph::new(title).style(Style::default().bg(Color::DarkGray).fg(timing_color)),
         area,
     );
 }
@@ -416,10 +496,10 @@ fn draw_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     let right = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10), Constraint::Min(5)])
+        .constraints([Constraint::Length(15), Constraint::Min(5)])
         .split(cols[1]);
 
-    draw_registers(f, app, right[0]);
+    draw_right_panel(f, app, right[0]);
     draw_memory(f, app, right[1]);
 }
 
@@ -450,7 +530,32 @@ fn draw_terminal(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_registers(f: &mut Frame, app: &App, area: Rect) {
+// ── Right panel (tabbed: CPU / VIA1 / VIA2 / ACIA / IRQ) ─────────────────────
+
+fn draw_right_panel(f: &mut Frame, app: &mut App, area: Rect) {
+    let tabs_area  = Rect { height: 1, ..area };
+    let block_area = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
+
+    let labels: Vec<Line> = RightTab::ALL.iter().map(|t| Line::from(t.label())).collect();
+    let sel_idx = RightTab::ALL.iter().position(|t| *t == app.right_tab).unwrap_or(0);
+    f.render_widget(
+        Tabs::new(labels)
+            .select(sel_idx)
+            .style(Style::default().fg(Color::DarkGray))
+            .highlight_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        tabs_area,
+    );
+
+    match app.right_tab {
+        RightTab::Cpu  => draw_cpu_panel(f, app, block_area),
+        RightTab::Via1 => draw_via_panel(f, app, block_area, true),
+        RightTab::Via2 => draw_via_panel(f, app, block_area, false),
+        RightTab::Acia => draw_acia_panel(f, app, block_area),
+        RightTab::Irq  => draw_irq_panel(f, app, block_area),
+    }
+}
+
+fn draw_cpu_panel(f: &mut Frame, app: &App, area: Rect) {
     let cpu = match app.shared.try_lock() {
         Ok(s) => s.cpu.clone(),
         Err(_) => CpuState::default(),
@@ -579,6 +684,383 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(msg).style(Style::default().bg(Color::DarkGray).fg(Color::Gray)),
         area,
+    );
+}
+
+// ── VIA panel ─────────────────────────────────────────────────────────────────
+
+fn via_flag_str(v: u8) -> String {
+    format!("T1:{} T2:{} CB1:{} CB2:{} SR:{} CA1:{} CA2:{}",
+        (v >> 6) & 1, (v >> 5) & 1, (v >> 4) & 1,
+        (v >> 3) & 1, (v >> 2) & 1, (v >> 1) & 1, v & 1)
+}
+
+fn draw_via_panel(f: &mut Frame, app: &App, area: Rect, is_via1: bool) {
+    let (title, border_color) = if is_via1 {
+        (" VIA1 $CC00  IC18 — NMI ", Color::Yellow)
+    } else {
+        (" VIA2 $CC80  IC16 — IRQ1 ", Color::Magenta)
+    };
+
+    let text: Vec<Line> = if let Ok(st) = app.shared.try_lock() {
+        let via = if is_via1 { &st.bus.via1 } else { &st.bus.via2 };
+        let freerun  = if via.acr & 0x40 != 0 { "free-run" } else { "one-shot" };
+        let irq_out  = via.irq();
+        vec![
+            Line::from(vec![
+                Span::styled(" ORA:", Style::default().fg(Color::Yellow)),
+                Span::raw(format!("{:02X}  ", via.ora)),
+                Span::styled("DDRA:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}   ", via.ddra)),
+                Span::styled("ORB:", Style::default().fg(Color::Yellow)),
+                Span::raw(format!("{:02X}  ", via.orb)),
+                Span::styled("DDRB:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}", via.ddrb)),
+            ]),
+            Line::from(vec![
+                Span::styled(" T1:", Style::default().fg(Color::Cyan)),
+                Span::raw(format!(" cnt:{:04X}  latch:{:04X}  {}", via.t1_counter, via.t1_latch,
+                    if via.t1_running { "run" } else { "---" })),
+                Span::styled(format!("  {}", freerun), Style::default().fg(Color::DarkGray)),
+            ]),
+            Line::from(vec![
+                Span::styled(" T2:", Style::default().fg(Color::Cyan)),
+                Span::raw(format!(" cnt:{:04X}  {}", via.t2_counter,
+                    if via.t2_running { "run" } else { "---" })),
+            ]),
+            Line::from(vec![
+                Span::styled(" ACR:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", via.acr)),
+                Span::styled("PCR:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", via.pcr)),
+                Span::styled("SR:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}", via.sr)),
+            ]),
+            Line::from(vec![
+                Span::styled(" IFR:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", via.ifr)),
+                Span::styled(
+                    format!("[{}]", via_flag_str(via.ifr)),
+                    Style::default().fg(if via.ifr & 0x80 != 0 { Color::Red } else { Color::DarkGray }),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" IER:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{:02X}  ", via.ier)),
+                Span::styled(format!("[{}]", via_flag_str(via.ier)), Style::default().fg(Color::DarkGray)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Výstup: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    if irq_out { if is_via1 { "NMI !" } else { "IRQ !" } }
+                    else { "---" },
+                    Style::default().fg(if irq_out { Color::Red } else { Color::DarkGray })
+                        .add_modifier(if irq_out { Modifier::BOLD } else { Modifier::empty() }),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(" [CPU thread běží — zkus znovu] ")]
+    };
+
+    f.render_widget(
+        Paragraph::new(text)
+            .block(Block::default().title(title).borders(Borders::ALL)
+                .border_style(Style::default().fg(border_color))),
+        area,
+    );
+}
+
+// ── ACIA panel ────────────────────────────────────────────────────────────────
+
+fn draw_acia_panel(f: &mut Frame, app: &App, area: Rect) {
+    let text: Vec<Line> = if let Ok(st) = app.shared.try_lock() {
+        let a = &st.bus.acia;
+        let baud = if a.baud_divider > 0 { 1_000_000 / a.baud_divider } else { 0 };
+        let word_bits = match (a.control >> 5) & 0x03 {
+            0 => 8u8, 1 => 7, 2 => 6, _ => 5,
+        };
+        let stop_bits = if a.control & 0x80 != 0 { 2u8 } else { 1 };
+        let parity = match (a.control >> 5) & 0x07 {
+            3 => "O", 5 => "E", _ => "N",
+        };
+        let rxirq_mode = match (a.command >> 1) & 0x03 {
+            0 => "off", 1 => "on ", 2 => "on+RTS↓", 3 => "on(brk)",
+            _ => "???",
+        };
+        vec![
+            Line::from(vec![
+                Span::styled(" STATUS:  ", Style::default().fg(Color::Yellow)),
+                Span::raw(format!("${:02X}  ", a.status)),
+                Span::styled(
+                    format!("IRQ:{}  TDRE:{}  RDRF:{}  OVRN:{}",
+                        (a.status >> 7) & 1,
+                        (a.status >> 4) & 1,
+                        (a.status >> 3) & 1,
+                        (a.status >> 2) & 1,
+                    ),
+                    Style::default().fg(if a.status & 0x88 != 0 { Color::Red } else { Color::DarkGray }),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" COMMAND: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:02X}  ", a.command)),
+                Span::styled(
+                    format!("RxIRQ:{}  RTS:{}  DTR:{}",
+                        rxirq_mode,
+                        (a.command >> 3) & 1,
+                        a.command & 1,
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" CONTROL: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:02X}  ", a.control)),
+                Span::styled(
+                    format!("{} Bd  {}{}{}",
+                        baud, word_bits, parity, stop_bits),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" RX DATA: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("${:02X} '{}'  rdrf:{}  irq_pend:{}",
+                    a.rx_data,
+                    if a.rx_data >= 0x20 && a.rx_data < 0x7F { a.rx_data as char } else { '.' },
+                    a.rdrf as u8, a.irq_pending as u8,
+                )),
+            ]),
+            Line::from(vec![
+                Span::styled(" baud_div:", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!(" {}  (~{} Bd @ 1 MHz clk)", a.baud_divider, baud)),
+            ]),
+        ]
+    } else {
+        vec![Line::from(" [CPU thread běží — zkus znovu] ")]
+    };
+
+    f.render_widget(
+        Paragraph::new(text)
+            .block(Block::default()
+                .title(" ACIA $C800  IC19 — R6551 ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green))),
+        area,
+    );
+}
+
+// ── IRQ latch panel ───────────────────────────────────────────────────────────
+
+fn draw_irq_panel(f: &mut Frame, app: &App, area: Rect) {
+    const SOURCES: &[(&str, u8)] = &[
+        ("ACIA   IRQ0", 0),
+        ("VIA2   IRQ1", 1),
+        ("ISA DEV0   ", 2),
+        ("ISA DEV1   ", 3),
+        ("ISA DEV2   ", 4),
+        ("ISA EXT    ", 5),
+        ("ISA ?      ", 6),
+        ("S1 btn IRQ7", 7),
+    ];
+
+    let text: Vec<Line> = if let Ok(st) = app.shared.try_lock() {
+        let latch = &st.bus.irq_latch;
+        let active = latch.active;
+        let encoded = latch.read_encoded();
+
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(" Active: ", Style::default().fg(Color::Yellow)),
+                Span::raw(format!("${:02X}   ", active)),
+                Span::styled(
+                    if active != 0 { "[ IRQ ACTIVE ]" } else { "[ žádný IRQ  ]" },
+                    Style::default().fg(if active != 0 { Color::Red } else { Color::DarkGray })
+                        .add_modifier(if active != 0 { Modifier::BOLD } else { Modifier::empty() }),
+                ),
+            ]),
+            Line::from(""),
+        ];
+
+        for (name, bit) in SOURCES {
+            let set = active & (1 << bit) != 0;
+            lines.push(Line::from(vec![
+                Span::raw(format!("  [{}] ", bit)),
+                Span::styled(
+                    format!("{}", name),
+                    Style::default().fg(if set { Color::White } else { Color::DarkGray }),
+                ),
+                Span::styled(
+                    if set { "  ●  AKTIVNÍ" } else { "  ·" },
+                    Style::default().fg(if set { Color::Red } else { Color::DarkGray })
+                        .add_modifier(if set { Modifier::BOLD } else { Modifier::empty() }),
+                ),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(" Enkodér: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("${:02X}  priorita={}", encoded, encoded & 0x07)),
+        ]));
+        lines
+    } else {
+        vec![Line::from(" [CPU thread běží] ")]
+    };
+
+    f.render_widget(
+        Paragraph::new(text)
+            .block(Block::default()
+                .title(" IRQ Latch $C400 — IC17+IC27 ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red))),
+        area,
+    );
+}
+
+// ── EditMem modal ─────────────────────────────────────────────────────────────
+
+fn draw_edit_mem(f: &mut Frame, app: &mut App, area: Rect) {
+    let (phase, addr_buf, val_buf) = match &app.modal {
+        Modal::EditMem { phase, addr_buf, val_buf } =>
+            (*phase, addr_buf.clone(), val_buf.clone()),
+        _ => return,
+    };
+
+    // Peek current byte if address is complete (4 hex digits)
+    let cur_val: Option<u8> = if addr_buf.len() == 4 {
+        if let Ok(a) = u16::from_str_radix(&addr_buf, 16) {
+            if let Ok(mut st) = app.shared.try_lock() {
+                Some(st.bus.dump(a, 1)[0])
+            } else { None }
+        } else { None }
+    } else { None };
+
+    let popup = centered_rect(50, 0, 44, 9, area);
+    f.render_widget(Clear, popup);
+
+    let mut lines = vec![Line::from("")];
+    if !phase {
+        lines.push(Line::from(format!(
+            "  Adresa: ${:_<4}{}",
+            addr_buf,
+            cur_val.map(|v| format!("   [=${:02X}]", v)).unwrap_or_default(),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Enter=Potvrdit  Esc=Zrušit  0-9/A-F=hex",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        lines.push(Line::from(format!(
+            "  Adresa: ${}   [=${:02X}]",
+            addr_buf, cur_val.unwrap_or(0),
+        )));
+        lines.push(Line::from(format!("  Hodnota: ${:_<2}", val_buf)));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Enter=Zapsat  Esc=Zpět  0-9/A-F=hex",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default()
+                .title(" Editace paměti — Ctrl+M ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))),
+        popup,
+    );
+}
+
+// ── EditReg modal ─────────────────────────────────────────────────────────────
+
+const REG_NAMES:  &[&str]  = &["A", "X", "Y", "SP", "PC", "P"];
+const REG_IS16:   &[bool]  = &[false, false, false, false, true, false];
+
+fn draw_edit_reg(f: &mut Frame, app: &App, area: Rect) {
+    let (sel, val_buf) = match &app.modal {
+        Modal::EditReg { sel, val_buf } => (*sel, val_buf.as_str()),
+        _ => return,
+    };
+
+    let cpu = match app.shared.try_lock() {
+        Ok(s) => s.cpu.clone(),
+        Err(_) => CpuState::default(),
+    };
+
+    let reg_vals: [u16; 6] = [
+        cpu.a as u16, cpu.x as u16, cpu.y as u16,
+        cpu.sp as u16, cpu.pc, cpu.p as u16,
+    ];
+
+    let popup = centered_rect(55, 0, 48, 11, area);
+    f.render_widget(Clear, popup);
+
+    let mut lines = vec![Line::from("")];
+    for i in 0..REG_NAMES.len() {
+        let is16 = REG_IS16[i];
+        let cur  = if is16 { format!("${:04X}", reg_vals[i]) }
+                   else    { format!("${:02X}",  reg_vals[i] as u8) };
+
+        let max_len = if is16 { 4 } else { 2 };
+        let extra = if i == 5 {
+            let p = cpu.p;
+            format!("  {}{}·{}{}{}{}{}",
+                if p & 0x80 != 0 { 'N' } else { 'n' },
+                if p & 0x40 != 0 { 'V' } else { 'v' },
+                if p & 0x10 != 0 { 'B' } else { 'b' },
+                if p & 0x08 != 0 { 'D' } else { 'd' },
+                if p & 0x04 != 0 { 'I' } else { 'i' },
+                if p & 0x02 != 0 { 'Z' } else { 'z' },
+                if p & 0x01 != 0 { 'C' } else { 'c' },
+            )
+        } else { String::new() };
+
+        let arrow = if i == sel { "▶" } else { " " };
+
+        let mut spans = vec![
+            Span::styled(
+                format!(" {} {:2} = ", arrow, REG_NAMES[i]),
+                if i == sel { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) }
+                else { Style::default().fg(Color::DarkGray) },
+            ),
+            Span::styled(
+                cur,
+                if i == sel { Style::default().fg(Color::Yellow) }
+                else { Style::default().fg(Color::White) },
+            ),
+            Span::raw(extra),
+        ];
+        if i == sel && !val_buf.is_empty() {
+            let padded = format!("{:_<width$}", val_buf, width = max_len);
+            spans.push(Span::styled(
+                format!("  ← ${}", padded),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ));
+        } else if i == sel {
+            spans.push(Span::styled(
+                format!("  ← ${:_<width$}", "", width = max_len),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ↑↓=Reg  0-9/A-F=Hodnota  Enter=Nastavit  Esc=Zrušit",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default()
+                .title(" Nastavení registrů CPU — Ctrl+R ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))),
+        popup,
     );
 }
 
@@ -897,6 +1379,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         Modal::FileBrowser(_)    => { handle_filebrowser_key(app, key);  return false; }
         Modal::LoadTarget { .. } => { handle_load_target_key(app, key);  return false; }
         Modal::GotoAddr { .. }   => { handle_goto_key(app, key);         return false; }
+        Modal::EditMem { .. }    => { handle_edit_mem_key(app, key);     return false; }
+        Modal::EditReg { .. }    => { handle_edit_reg_key(app, key);     return false; }
         Modal::None => {}
     }
     handle_normal_key(app, key)
@@ -1004,6 +1488,117 @@ fn handle_goto_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+// ── Edit-memory keys ─────────────────────────────────────────────────────────
+
+fn handle_edit_mem_key(app: &mut App, key: KeyEvent) {
+    let (phase, addr_buf, val_buf) = match &app.modal {
+        Modal::EditMem { phase, addr_buf, val_buf } =>
+            (*phase, addr_buf.clone(), val_buf.clone()),
+        _ => return,
+    };
+
+    match key.code {
+        // ── Phase 0: enter address ─────────────────────────────────────────
+        KeyCode::Esc if !phase => {
+            app.modal = Modal::None;
+            app.status_msg = "Editace zrušena.".into();
+        }
+        KeyCode::Char(c) if c.is_ascii_hexdigit() && !phase => {
+            if addr_buf.len() < 4 {
+                let mut s = addr_buf; s.push(c.to_ascii_uppercase());
+                app.modal = Modal::EditMem { phase: false, addr_buf: s, val_buf };
+            }
+        }
+        KeyCode::Backspace if !phase => {
+            let mut s = addr_buf; s.pop();
+            app.modal = Modal::EditMem { phase: false, addr_buf: s, val_buf };
+        }
+        KeyCode::Enter if !phase => {
+            if !addr_buf.is_empty() {
+                let padded = format!("{:0>4}", addr_buf);
+                if u16::from_str_radix(&padded, 16).is_ok() {
+                    app.modal = Modal::EditMem { phase: true, addr_buf: padded, val_buf };
+                }
+            }
+        }
+
+        // ── Phase 1: enter value ───────────────────────────────────────────
+        KeyCode::Esc if phase => {
+            app.modal = Modal::EditMem { phase: false, addr_buf, val_buf: String::new() };
+        }
+        KeyCode::Char(c) if c.is_ascii_hexdigit() && phase => {
+            if val_buf.len() < 2 {
+                let mut s = val_buf; s.push(c.to_ascii_uppercase());
+                app.modal = Modal::EditMem { phase: true, addr_buf, val_buf: s };
+            }
+        }
+        KeyCode::Backspace if phase => {
+            let mut s = val_buf; s.pop();
+            app.modal = Modal::EditMem { phase: true, addr_buf, val_buf: s };
+        }
+        KeyCode::Enter if phase => {
+            if !val_buf.is_empty() {
+                let padded_val = format!("{:0>2}", val_buf);
+                if let (Ok(addr), Ok(val)) = (
+                    u16::from_str_radix(&addr_buf,  16),
+                    u8::from_str_radix(&padded_val, 16),
+                ) {
+                    app.status_msg = format!("Mem ${:04X} ← ${:02X}", addr, val);
+                    let _ = app.cmd_tx.send(Cmd::LoadAt { data: vec![val], addr, reset: false });
+                }
+                app.modal = Modal::None;
+            }
+        }
+        _ => {}
+    }
+}
+
+// ── Edit-register keys ────────────────────────────────────────────────────────
+
+fn handle_edit_reg_key(app: &mut App, key: KeyEvent) {
+    let (sel, val_buf) = match &app.modal {
+        Modal::EditReg { sel, val_buf } => (*sel, val_buf.clone()),
+        _ => return,
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            app.modal = Modal::None;
+            app.status_msg = "Editace zrušena.".into();
+        }
+        KeyCode::Up => {
+            let s = if sel > 0 { sel - 1 } else { REG_NAMES.len() - 1 };
+            app.modal = Modal::EditReg { sel: s, val_buf: String::new() };
+        }
+        KeyCode::Down => {
+            app.modal = Modal::EditReg { sel: (sel + 1) % REG_NAMES.len(), val_buf: String::new() };
+        }
+        KeyCode::Char(c) if c.is_ascii_hexdigit() => {
+            let max_len = if REG_IS16[sel] { 4 } else { 2 };
+            if val_buf.len() < max_len {
+                let mut s = val_buf; s.push(c.to_ascii_uppercase());
+                app.modal = Modal::EditReg { sel, val_buf: s };
+            }
+        }
+        KeyCode::Backspace => {
+            let mut s = val_buf; s.pop();
+            app.modal = Modal::EditReg { sel, val_buf: s };
+        }
+        KeyCode::Enter => {
+            if !val_buf.is_empty() {
+                let max_len = if REG_IS16[sel] { 4 } else { 2 };
+                let padded = format!("{:0>width$}", val_buf, width = max_len);
+                if let Ok(val) = u16::from_str_radix(&padded, 16) {
+                    app.status_msg = format!("{} ← ${:04X}", REG_NAMES[sel], val);
+                    let _ = app.cmd_tx.send(Cmd::SetReg { field: sel as u8, val });
+                }
+            }
+            app.modal = Modal::None;
+        }
+        _ => {}
+    }
+}
+
 // ── Normal mode keys ──────────────────────────────────────────────────────────
 
 fn handle_normal_key(app: &mut App, key: KeyEvent) -> bool {
@@ -1057,6 +1652,26 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) -> bool {
         // Goto address modal
         (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
             app.modal = Modal::GotoAddr { buf: String::new() };
+        }
+
+        // Edit single memory byte
+        (KeyModifiers::CONTROL, KeyCode::Char('m')) => {
+            app.modal = Modal::EditMem {
+                addr_buf: String::new(), val_buf: String::new(), phase: false,
+            };
+        }
+
+        // Edit CPU registers
+        (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+            app.modal = Modal::EditReg { sel: 0, val_buf: String::new() };
+        }
+
+        // Switch right panel tab (Shift+Tab = BackTab)
+        (_, KeyCode::BackTab) => {
+            let idx = RightTab::ALL.iter().position(|t| *t == app.right_tab).unwrap_or(0);
+            app.right_tab = RightTab::ALL[(idx + 1) % RightTab::ALL.len()];
+            let name = app.right_tab.label().trim();
+            app.status_msg = format!("Panel: {}", name);
         }
 
         // Terminal scroll (Shift+Pg before generic Pg)

@@ -32,12 +32,12 @@ pub struct Acia {
     pub control: u8,
 
     // Internal state
-    rx_data: u8,
-    rdrf: bool,  // receive data register full
-    irq_pending: bool,
+    pub rx_data:     u8,
+    pub rdrf:        bool,  // receive data register full
+    pub irq_pending: bool,
 
     // Cycle-level timing
-    baud_divider: u32, // cycles per bit at current baud rate
+    pub baud_divider: u32, // cycles per bit at current baud rate
     rx_timer: u32,
     tx_timer: u32,
 }

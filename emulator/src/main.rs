@@ -31,7 +31,7 @@ use clap::Parser;
 
 use acia::AciaIo;
 use app::{App, Cmd, SharedState};
-use bus::Bus;
+use bus::{Bus, ChipFamily};
 use cpu::Cpu;
 
 #[derive(Parser)]
@@ -47,6 +47,11 @@ struct Cli {
     /// TCP port for virtual serial port (0 = disabled)
     #[arg(short, long, default_value_t = 6551)]
     port: u16,
+
+    /// Adresní dekodér — rodina logických obvodů IC9/IC11
+    /// Hodnoty: LS, ALS, HCT, HC, AC, ACT  (výchozí: HCT)
+    #[arg(short = 'f', long = "family", default_value = "HCT")]
+    family: String,
 }
 
 fn main() {
@@ -58,6 +63,15 @@ fn main() {
     // ── Build bus and initial state ───────────────────────────────────────
     let acia = acia::Acia::new(Arc::clone(&acia_io));
     let mut bus = Bus::new(acia);
+
+    // Set chip family (address decoder timing model)
+    let family: ChipFamily = cli.family.parse().unwrap_or_else(|e| {
+        eprintln!("Warning: {e}. Používám HCT.");
+        ChipFamily::HCT
+    });
+    bus.chip_family = family;
+    eprintln!("Chip family: {}  (decode delay: {} ns)",
+        family.name(), bus.decode_delay_ns());
 
     // Load ROM if provided
     if let Some(path) = &cli.rom {
@@ -172,6 +186,19 @@ fn cpu_thread(shared: Arc<Mutex<SharedState>>, cmd_rx: mpsc::Receiver<Cmd>, init
                         if reset {
                             cpu.reset(&mut st.bus);
                         }
+                        st.cpu = cpu.snapshot();
+                    }
+                    Cmd::SetReg { field, val } => {
+                        match field {
+                            0 => cpu.a  = val as u8,
+                            1 => cpu.x  = val as u8,
+                            2 => cpu.y  = val as u8,
+                            3 => cpu.sp = val as u8,
+                            4 => cpu.pc = val,
+                            5 => cpu.p  = (val as u8) | 0x20, // U flag always set
+                            _ => {}
+                        }
+                        let mut st = shared.lock().unwrap();
                         st.cpu = cpu.snapshot();
                     }
                     Cmd::Quit => { quit = true; break; }

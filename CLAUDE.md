@@ -172,18 +172,15 @@ ale v plném firmware s klávesnicí pollingem přes NMI je to kritická chyba.
 
 ---
 
-### Bug #2 — NMI ISR reloaduje špatné VIA
+### Bug #2 — NMI ISR reloaduje špatné VIA ✅ OPRAVENO
 **Soubor:** `Firmware/src/interrupts.asm` řádek 19
 
 ```asm
-; ŠPATNĚ:
-STA VIA2_T1C_H
-
-; SPRÁVNĚ:
-STA VIA1_T1C_H
+; OPRAVENO:
+STA VIA1_T1C_H    ; Bug #2 fix: NMI generuje VIA1 (IC18), ne VIA2
 ```
 
-**Dopad:** I kdybychom opravili Bug #1, ISR by reloadoval timer na IC16 místo IC18.
+Zároveň odstraněn `CLI` před `RTI` v `_IRQ_ISR` — RTI obnoví I-flag ze zásobníku automaticky.
 
 ---
 
@@ -223,6 +220,102 @@ na $7F10 vždy. TMS9918A na ISA kartě by soutěžil s IC6 na datové sběrnici.
 dekóduje svou CS adresu. Pokud karta neodpojuje IC6 při přístupu, je nutné
 VDP přesunout do IO prostoru ($C000–$CFFF) nebo použít !VERA_CS ($C000–$C3FF).  
 **Priorita:** Neřešit dokud není hardware ověřen fyzicky.
+
+---
+
+## Emulátor — p65emu
+
+**Umístění:** `emulator/` — Rust, TUI pomocí ratatui + crossterm.
+
+**Spuštění:**
+```
+cargo run --manifest-path emulator/Cargo.toml -- [ROM.bin] [-s SPEED_HZ] [-p TCP_PORT]
+```
+Výchozí rychlost: 1 MHz. Výchozí TCP port: 6551 (0 = zakázáno).
+
+**Emulované komponenty** (`emulator/src/`):
+- `cpu.rs` — W65C02 (krok, reset, NMI/IRQ poll, snapshot)
+- `ram.rs` — IC6 ($0000–$7FFF) + IC7 ($8000–$BFFF)
+- `rom.rs` — EEPROM 8 KB ($E000–$FFFF)
+- `acia.rs` — R6551 ($C800–$CBFF), TX/RX fronty sdílené s TUI a TCP
+- `via.rs` — VIA1 ($CC00–$CC7F) + VIA2 ($CC80–$CCFF), T1 timer
+- `irq_latch.rs` — IC27 74HC574 ($C400–$C4FF)
+- `bus.rs` — dekódování adres, `tick()` generuje NMI/IRQ signály
+- `app.rs` — TUI (ratatui), file browser, command channel TUI→CPU vlákno
+- `main.rs` — hlavní vlákno TUI + CPU vlákno + TCP sériový server
+
+**TUI klávesy:**
+
+| Klávesa | Akce |
+|---------|------|
+| F2 | Jeden krok (step) |
+| F3 | Run / Pause |
+| F4 | Reset CPU |
+| F5–F9 | Rychlost: 1K / 10K / 100K / 1M / MAX Hz |
+| +/- | Rychlost ×2 / ÷2 |
+| Tab | Přepnout záložku paměti (ZP/RAM/HiRAM/I/O/ROM/Addr) |
+| Shift+Tab | Přepnout záložku pravého panelu (CPU/VIA1/VIA2/ACIA/IRQ) |
+| PgUp/PgDn | Scroll paměti |
+| Shift+Pg | Scroll terminálu |
+| Ctrl+O | File browser — načíst ROM/RAM soubor |
+| Ctrl+G | Zadání hex adresy pro memory dump |
+| Ctrl+M | Editace bajtu v paměti (adresa → hodnota) |
+| Ctrl+R | Editace registrů CPU (A/X/Y/SP/PC/P) |
+| F10 / Ctrl+Q | Quit |
+
+**Pravý panel — záložky:**
+- **CPU** — registry A/X/Y/SP/PC/P + příznaky
+- **VIA1** — $CC00: ORA/ORB/DDR, T1/T2 čítače, ACR/PCR/IFR/IER
+- **VIA2** — $CC80: totéž pro IC16
+- **ACIA** — $C800: STATUS/COMMAND/CONTROL/RX DATA, baud rate
+- **IRQ** — latch $C480: aktivní bity 0–7, prioritní enkodér
+
+**Výběr rodiny obvodů (`--family`):**
+
+```
+p65emu --family HCT   # default — skutečná deska
+p65emu --family LS    # starší LS logika
+p65emu --family AC    # rychlá AC logika
+```
+
+Rodiny: `LS` (25 ns), `ALS` (11 ns), `HCT` (16 ns), `HC` (12 ns), `AC`/`ACT` (7 ns).  
+Titulek emulatoru zobrazuje `[HCT OK]` / `[LS ~MRG]` / `[LS SLOW!]` dle aktuální rychlosti.
+
+Model: 4 stupně dekodéru (IC9+IC11) × tpd + 7 ns (AC brány). Dostupný čas = T/2 − 60 ns.
+
+**TCP sériový port:** emulátor naslouchá na `127.0.0.1:6551` — připojení PuTTY / nc / uploader.py.
+
+---
+
+## Nástroje — tools/
+
+### tools/uploader.py — P65 SBC Uploader
+
+Python/tkinter GUI pro nahrávání programů do SBC nebo emulátoru.
+
+**Závislosti:** `pip install pyserial`
+
+**Režimy připojení:**
+- COM port — reálný hardware (19200 Bd, 8N1)
+- TCP — emulátor p65emu (výchozí `127.0.0.1:6551`)
+
+**Protokol bootloaderu:**
+
+| Příkaz | Akce |
+|--------|------|
+| `w` | Raw binary upload (přesně 8192 B → $6000–$7FFF) |
+| `h` | Intel HEX upload (libovolná adresa) |
+| `s` | Skok na $6000 (spuštění programu) |
+| `m` | EWOZ / WozMon monitor |
+| `^R` ($12) | Soft restart bootloaderu |
+
+---
+
+## Firmware — poznámky k ewoz.asm
+
+- ACIA init: `$09` (RX IRQ zakázán) — `$0B` by způsobil IRQ storm při EWOZ pollingu.
+- `NEXTCHAR` volá `_kb_input` (ne `_acia_getc`) — klávesnice přes VIA1/ATtiny26.
+- `ECHO` volá `gr_put_byte` — hook pro grafický výstup (TMS9918A / GameDuino).
 
 ---
 
