@@ -37,6 +37,7 @@
 .importzp   os_arg0, os_arg1, os_ptr
 .importzp   rd_ptr, rd_idx, rd_tmp
 .importzp   parse_idx, rd_src, rd_dst, rd_size_lo, rd_size_hi
+.importzp   fd_tmp
 
 ; cc65 ZP imports (used by acia/utils)
 .importzp   tmp1, ptr1
@@ -53,6 +54,10 @@
 cmd_buf:    .res 64         ; raw input line
 cmd_token:  .res 9          ; current parsed token (8 chars + NUL)
 os_name:    .res 9          ; filename parsed from command line
+hexbuf:     .res 16         ; HEXD: byte buffer for one output line
+hexd_cnt:   .res 1          ; HEXD: valid byte count in hexbuf
+
+.export cmd_token           ; needed by appartus_fileio TYPE/HEXD (autoimport)
 
 ; ---------------------------------------------------------------------------
 ; CODE
@@ -203,6 +208,20 @@ _shell_loop:
     BNE @no_reset
     JMP _cmd_reset
 @no_reset:
+
+    ; TYPE
+    JSR _str_cmp_P
+    .byte "TYPE",0
+    BNE @no_type
+    JMP _cmd_type
+@no_type:
+
+    ; HEXD
+    JSR _str_cmp_P
+    .byte "HEXD",0
+    BNE @no_hexd
+    JMP _cmd_hexd
+@no_hexd:
 
     ; Unknown command
     LDA #<str_unknown
@@ -407,6 +426,185 @@ _cmd_mon:
 
 _cmd_reset:
     JMP _RST
+
+; ---------------------------------------------------------------------------
+; _cmd_type — TYPE <name>
+;
+; Opens a file or device by name and prints its content to the ACIA.
+; For file FDs: stops at EOF.
+; For device FDs: stops when ESC ($1B) is received (useful with CON).
+; ---------------------------------------------------------------------------
+
+_cmd_type:
+    JSR _tok_next               ; parse filename into cmd_token
+    LDA cmd_token
+    BEQ @bad_args_t
+    LDA #<cmd_token
+    LDX #>cmd_token
+    JSR _fopen                  ; A=fd or $FF, C=1 error
+    BCS @notfound_t
+    TAX                         ; fd into X
+    STX fd_tmp                  ; save fd for the loop
+@type_loop:
+    LDX fd_tmp
+    JSR _fgetc                  ; A=byte, C=1 EOF/error
+    BCS @type_eof
+    CMP #$1B                    ; ESC aborts (useful for device FDs)
+    BEQ @type_eof
+    JSR _acia_putc
+    BRA @type_loop
+@type_eof:
+    LDX fd_tmp
+    JSR _fclose
+    JSR _acia_put_newline
+    JMP _shell_loop
+@notfound_t:
+    LDA #<str_notfound
+    LDX #>str_notfound
+    JSR _acia_print_nl
+    JMP _shell_loop
+@bad_args_t:
+    LDA #<str_bad_args
+    LDX #>str_bad_args
+    JSR _acia_print_nl
+    JMP _shell_loop
+
+; ---------------------------------------------------------------------------
+; _cmd_hexd — HEXD <name>
+;
+; Hex dump of a file or device, 16 bytes per line:
+;   OOOO: HH HH HH ... HH  cccccccc
+; ESC aborts.  Offset printed in hex.
+; Uses os_arg0/os_arg1 as the running byte offset (safe here: _rd_save
+; and _parse_hex4 are not called during a hex dump).
+; ---------------------------------------------------------------------------
+
+_cmd_hexd:
+    JSR _tok_next
+    LDA cmd_token
+    BNE @hexd_got_tok
+    JMP @bad_args_h
+@hexd_got_tok:
+    LDA #<cmd_token
+    LDX #>cmd_token
+    JSR _fopen
+    BCC @hexd_open_ok
+    JMP @notfound_h
+@hexd_open_ok:
+    TAX
+    STX fd_tmp
+    STZ os_arg0                 ; offset lo = 0
+    STZ os_arg1                 ; offset hi = 0
+
+@hexd_line:
+    ; Collect up to 16 bytes from fd into hexbuf
+    LDY #0
+@hexd_gather:
+    CPY #16
+    BEQ @hexd_print
+    LDX fd_tmp
+    JSR _fgetc
+    BCS @hexd_print             ; EOF
+    CMP #$1B
+    BNE @hexd_store
+    JMP @hexd_esc               ; ESC abort (JMP — no range limit)
+@hexd_store:
+    STA hexbuf,Y
+    INY
+    BRA @hexd_gather
+
+@hexd_print:
+    CPY #0
+    BNE @hexd_has_data
+    JMP @hexd_done              ; no bytes — clean exit
+@hexd_has_data:
+    STY hexd_cnt                ; remember actual byte count
+
+    ; Print 4-digit offset (os_arg1 hi, os_arg0 lo)
+    LDA os_arg1
+    JSR _print_byte
+    LDA os_arg0
+    JSR _print_byte
+    LDA #':'
+    JSR _acia_putc
+    LDA #' '
+    JSR _acia_putc
+
+    ; Print hex bytes
+    LDX #0
+@hexd_hex:
+    CPX hexd_cnt
+    BEQ @hexd_hexpad
+    LDA hexbuf,X
+    JSR _print_byte
+    LDA #' '
+    JSR _acia_putc
+    INX
+    BRA @hexd_hex
+@hexd_hexpad:
+    ; Pad with spaces for short lines (3 chars per missing byte)
+    CPX #16
+    BEQ @hexd_ascii
+    LDA #' '
+    JSR _acia_putc
+    JSR _acia_putc
+    JSR _acia_putc
+    INX
+    BRA @hexd_hexpad
+
+@hexd_ascii:
+    LDA #' '
+    JSR _acia_putc
+    ; Print ASCII representation
+    LDX #0
+@hexd_asc:
+    CPX hexd_cnt
+    BEQ @hexd_endl
+    LDA hexbuf,X
+    CMP #$20
+    BCC @hexd_dot
+    CMP #$7F
+    BCC @hexd_printable
+@hexd_dot:
+    LDA #'.'
+@hexd_printable:
+    JSR _acia_putc
+    INX
+    BRA @hexd_asc
+
+@hexd_endl:
+    JSR _acia_put_newline
+    ; Advance offset by count
+    LDA os_arg0
+    CLC
+    ADC hexd_cnt
+    STA os_arg0
+    BCC @hexd_cont
+    INC os_arg1
+@hexd_cont:
+    ; If we got a full line, continue; partial line means EOF was hit
+    LDA hexd_cnt
+    CMP #16
+    BNE @hexd_done      ; partial line → EOF, done
+    JMP @hexd_line      ; full line → next line (JMP: no range limit)
+
+@hexd_esc:
+    JSR _acia_put_newline
+@hexd_done:
+    LDX fd_tmp
+    JSR _fclose
+    JMP _shell_loop
+
+@notfound_h:
+    LDA #<str_notfound
+    LDX #>str_notfound
+    JSR _acia_print_nl
+    JMP _shell_loop
+@bad_args_h:
+    LDA #<str_bad_args
+    LDX #>str_bad_args
+    JSR _acia_print_nl
+    JMP _shell_loop
 
 ; ---------------------------------------------------------------------------
 ; _getline - Read one line from ACIA into cmd_buf (max 63 chars)
@@ -702,13 +900,13 @@ _strcpy_to_osname:
 RDF_RUN = $02
 
 str_banner:
-    .byte "AppartusOS v1.0  [Project65 / W65C02]",0
+    .byte "AppartusOS v1.1  [Project65 / W65C02]",0
 str_sub:
     .byte "Type HELP for commands.",0
 str_prompt:
     .byte "> ",0
 str_version:
-    .byte "AppartusOS v1.0  2026  Project65 SBC",0
+    .byte "AppartusOS v1.1  2026  Project65 SBC",0
 str_rd_fmt:
     .byte "RAMDisk unformatted - initialising...",0
 str_help:
@@ -722,8 +920,11 @@ str_help:
     .byte "  SAVE <n> <addr> <sz> - save RAM region to RAMDisk",13,10
     .byte "  DEL  <name>          - delete file",13,10
     .byte "  RUN  <name>          - run file from RAMDisk",13,10
+    .byte "  TYPE <name>          - print file/device to terminal",13,10
+    .byte "  HEXD <name>          - hex dump of file/device",13,10
     .byte "  MON                  - EWOZ monitor",13,10
-    .byte "  RESET                - soft reset",13,10,0
+    .byte "  RESET                - soft reset",13,10
+    .byte "Devices: CON  NULL  VIA1  VIA2",13,10,0
 str_fmt_confirm:
     .byte "Format RAMDisk? ALL DATA LOST. (Y/N): ",0
 str_fmt_done:

@@ -84,7 +84,24 @@
       "Bash(cc65 -t none -O --cpu 65C02 main_min.c)",
       "Bash(ca65 --cpu 65c02 main_min.s -o ../output/main_min.o)",
       "Bash(echo \"ASM:$?\")",
-      "Bash(echo \"RD:$?\")"
+      "Bash(echo \"RD:$?\")",
+      "Bash(ca65 --cpu 65c02 os\\\\appartus_shell.asm -o ..\\\\output\\\\appartus_shell.o -l ..\\\\lst\\\\appartus_shell.lst)",
+      "Bash(ca65 --cpu 65c02 \"os/appartus_shell.asm\" -o \"../output/appartus_shell.o\" -l \"../lst/appartus_shell.lst\")",
+      "Bash(ca65 --cpu 65c02 \"os/appartus_shell.asm\" -o \"../output/appartus_shell.o\")",
+      "Bash(ca65 --cpu 65c02 \"os/appartus_fileio.asm\" -o \"../output/appartus_fileio.o\")",
+      "Bash(cmd.exe /c \"cd C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware && build_appartus.bat\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware && call build_appartus.bat\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware && call build_appartus.bat > C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\build_out.txt 2>&1 && type C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\build_out.txt\")",
+      "Bash(cmd.exe /c \"type C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\build_out.txt\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware\\\\\\\\src && for /f \\\\\"tokens=*\\\\\" %%i in \\('where cc65'\\) do set CC65_FULL=%%i && echo CC65 found\")",
+      "Bash(cmd.exe /c \"where cc65 && where ca65 && where ld65\")",
+      "Bash(where cc65 *)",
+      "Bash(where ld65 *)",
+      "Bash(ca65 --cpu 65c02 os/appartus_fileio.asm -o ../output/appartus_fileio.o)",
+      "Bash(ca65 --cpu 65c02 ihex.asm -o ../output/ihex.o)",
+      "Bash(ca65 --cpu 65c02 vectors.asm -o ../output/vectors.o)",
+      "Bash(ca65 --cpu 65c02 interrupts.asm -o ../output/interrupts.o)",
+      "Bash(ca65 --cpu 65c02 zeropage.asm -o ../output/zeropage.o)"
     ]
   }
 }

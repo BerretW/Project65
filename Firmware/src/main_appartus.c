@@ -12,10 +12,12 @@
 #include "acia.h"
 
 extern void __fastcall__ os_main(void);
+extern void fio_init(void);     /* appartus_fileio.asm – init FD table */
 
 void main(void) {
     INTDI();
     init_vec();
     acia_init();
+    fio_init();     /* open FD 0/1/2 as CON (stdin/stdout/stderr) */
     os_main();      /* defined in appartus_shell.asm – never returns */
 }

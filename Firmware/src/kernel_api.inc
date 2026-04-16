@@ -70,6 +70,38 @@ OS_RD_FREE    = $FF48   ; Print free space to ACIA
 OS_RD_CPY     = $FF4B   ; memcpy rd_src→rd_dst, rd_size_hi:lo bytes
 
 ; ============================================================
+; Part 2b – VFS / file-descriptor API ($FF4E+)
+; ============================================================
+; Devices: CON  NULL  VIA1  VIA2
+; Pre-opened: FD 0 = stdin (CON), FD 1 = stdout (CON), FD 2 = stderr (CON)
+; User FDs:   FD 3..5  (opened by OS_FOPEN, closed by OS_FCLOSE)
+;
+; Calling convention:
+;   OS_FIO_INIT               — call once at boot (done by main_appartus.c)
+;   OS_FOPEN  A=lo, X=hi      — open by name; Out: A=fd (3-5), C=1 error
+;   OS_FCLOSE X=fd            — close; FDs 0-2 protected
+;   OS_FGETC  X=fd            — Out: A=byte, C=0 ok; C=1 EOF/error
+;   OS_FPUTC  A=byte, X=fd    — Out: C=0 ok; C=1 error (files are read-only)
+;
+; Example — dump file HELLO to console:
+;   LDA #<str_hello           ; "HELLO",0
+;   LDX #>str_hello
+;   JSR OS_FOPEN              ; A=fd, C=0 if found
+;   BCS not_found
+;   TAX
+; loop: JSR OS_FGETC          ; X=fd
+;   BCS done                  ; EOF
+;   JSR ROM_PUTC
+;   BRA loop
+; done: JSR OS_FCLOSE
+
+OS_FIO_INIT   = $FF4E   ; Init FD table, open FD 0/1/2 as CON
+OS_FOPEN      = $FF51   ; Open file/device (A=name_lo, X=name_hi) → A=fd
+OS_FCLOSE     = $FF54   ; Close fd (X=fd)
+OS_FGETC      = $FF57   ; Read byte (X=fd) → A; C=1 EOF
+OS_FPUTC      = $FF5A   ; Write byte (A=byte, X=fd) → C=1 error
+
+; ============================================================
 ; Part 3 – OS zero page variable addresses
 ; (read/write these to pass arguments to OS routines)
 ; ============================================================
@@ -84,6 +116,10 @@ OS_ZP_RDSRC   = $49     ; 2-byte copy source ($49 lo, $4A hi)
 OS_ZP_RDDST   = $4B     ; 2-byte copy dest ($4B lo, $4C hi)
 OS_ZP_SIZELO  = $4D     ; Copy/file size lo
 OS_ZP_SIZEHI  = $4E     ; Copy/file size hi
+; VFS layer ZP (read-only for user programs — managed by OS_FOPEN/FGETC)
+OS_ZP_FDTMP   = $4F     ; Scratch fd during OS_FOPEN
+OS_ZP_FIOPTR  = $50     ; 2-byte FD table entry pointer ($50 lo, $51 hi)
+OS_ZP_IOBUF   = $52     ; 2-byte computed read address  ($52 lo, $53 hi)
 
 ; ============================================================
 ; Part 4 – RAMDisk layout constants

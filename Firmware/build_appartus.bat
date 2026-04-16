@@ -77,6 +77,9 @@ if errorlevel 1 ( echo CHYBA: ca65 appartus_zp.asm & cd .. & exit /b 1 )
 ca65 --cpu 65c02 os\appartus_ramdisk.asm     -o ..\output\appartus_ramdisk.o    -l ..\lst\appartus_ramdisk.lst
 if errorlevel 1 ( echo CHYBA: ca65 appartus_ramdisk.asm & cd .. & exit /b 1 )
 
+ca65 --cpu 65c02 os\appartus_fileio.asm      -o ..\output\appartus_fileio.o     -l ..\lst\appartus_fileio.lst
+if errorlevel 1 ( echo CHYBA: ca65 appartus_fileio.asm & cd .. & exit /b 1 )
+
 ca65 --cpu 65c02 os\appartus_shell.asm       -o ..\output\appartus_shell.o      -l ..\lst\appartus_shell.lst
 if errorlevel 1 ( echo CHYBA: ca65 appartus_shell.asm & cd .. & exit /b 1 )
 
@@ -116,6 +119,7 @@ ld65 -C ..\config\appartus_os.cfg ^
      appartus_jmptbl_ext.o ^
      appartus_zp.o ^
      appartus_ramdisk.o ^
+     appartus_fileio.o ^
      appartus_shell.o ^
      %CC65_LIB% ^
      -o APPARTUS_OS.bin

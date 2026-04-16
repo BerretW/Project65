@@ -43,6 +43,22 @@ _JOS_RD_FREE:   JMP _rd_free
 ; $FF4B - RAMDisk memcpy helper (rd_src→rd_dst, rd_size_hi:lo bytes)
 _JOS_RD_CPY:    JMP _rd_memcpy
 
+; $FF4E - Initialise FD table and pre-open stdin/stdout/stderr as CON
+_JFIO_INIT:     JMP _fio_init
+
+; $FF51 - Open file or device by name (A=name_lo, X=name_hi) → A=fd; C=1 error
+_JFOPEN:        JMP _fopen
+
+; $FF54 - Close file descriptor (X=fd); FD 0-2 are protected
+_JFCLOSE:       JMP _fclose
+
+; $FF57 - Read byte from fd (X=fd) → A=byte; C=1 EOF/error
+_JFGETC:        JMP _fgetc
+
+; $FF5A - Write byte to fd (A=byte, X=fd) → C=1 error
+_JFPUTC:        JMP _fputc
+
 .export _JOS_SHELL, _JOS_RD_INIT, _JOS_RD_LIST, _JOS_RD_FIND
 .export _JOS_RD_SAVE, _JOS_RD_DEL, _JOS_RD_RUN, _JOS_RD_FREE
 .export _JOS_RD_CPY
+.export _JFIO_INIT, _JFOPEN, _JFCLOSE, _JFGETC, _JFPUTC

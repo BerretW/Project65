@@ -19,5 +19,11 @@ rd_dst:     .res 2      ; $4B-$4C - memcpy dest pointer (lo/hi)
 rd_size_lo: .res 1      ; $4D - file/copy size low byte
 rd_size_hi: .res 1      ; $4E - file/copy size high byte
 
+; --- VFS / file-descriptor layer ($4F-$53) ---
+fd_tmp:     .res 1      ; $4F - scratch fd / chosen slot during _fopen
+fio_ptr:    .res 2      ; $50-$51 - pointer to FD table entry or dev-name scan
+io_buf:     .res 2      ; $52-$53 - computed read address (_fgetc file path)
+
 .exportzp os_arg0, os_arg1, os_ptr, rd_ptr, rd_idx, rd_tmp
 .exportzp parse_idx, rd_src, rd_dst, rd_size_lo, rd_size_hi
+.exportzp fd_tmp, fio_ptr, io_buf

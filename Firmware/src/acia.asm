@@ -56,11 +56,12 @@ _acia_puts:         phay
                     stx ptr1 + 1
                     ldy #0
 @next_char:         lda (ptr1),y
-
                     beq @eos
                     jsr _acia_putc
                     iny
                     bne @next_char
+                    inc ptr1+1      ; Y wrapped 255→0: advance base ptr to next page
+                    bra @next_char  ; continue from Y=0
 @eos:               play
                     rts
 ; void acia_put_newline()
