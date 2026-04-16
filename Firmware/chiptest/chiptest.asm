@@ -24,6 +24,7 @@
 .setcpu "65C02"
 
 .include "jumptable.inc65"
+.include "vdp_text.inc65"
 
 ; ---------------------------------------------------------------------------
 ; Adresy cipu
@@ -61,6 +62,8 @@ ptr         = $70       ; 2 B - scratch pointer (precteny bajt z VRAM)
 totfail     = $72       ; pocet neuspesnych testu celkem
 tmp         = $73       ; scratch byte (vzor / status)
 note_idx    = $74       ; index aktualniho tonu SAA (0-5)
+; vdp_col = $75, vdp_row = $76 — definovano v vdp_text.inc65
+vdp_res_col = $77       ; sloupec pro zapis OK/FAIL vysledku na VDP
 
 ; ---------------------------------------------------------------------------
 .segment "CODE"
@@ -73,9 +76,16 @@ start:
 
     jsr ROM_ACIA_INIT
 
-    ; Inicializace VDP displeje — světle modrá = testování probíhá
-    lda #$51            ; fg=5 light blue, bg=1 black
-    jsr vdp_setup_screen
+    ; Inicializace VDP: font, color table, prazdna obrazovka
+    jsr vdp_init_text
+
+    ; Titulek na VDP
+    lda #0
+    ldx #0
+    jsr vdp_gotoxy
+    lda #<vstr_title
+    ldx #>vstr_title
+    jsr vdp_puts
 
     lda #<str_banner
     ldx #>str_banner
@@ -83,17 +93,39 @@ start:
 
     ; ===== TMS9918A testy =====
 
+    ; Hlavicka TMS na VDP (radek 2)
+    lda #0
+    ldx #2
+    jsr vdp_gotoxy
+    lda #<vstr_tms_hdr
+    ldx #>vstr_tms_hdr
+    jsr vdp_puts
+
     lda #<str_tms_hdr
     ldx #>str_tms_hdr
     jsr ROM_GETS
 
     ; Test 1: STATUS registr
+    lda #0
+    ldx #3
+    jsr vdp_gotoxy
+    lda #<str_tms_t1_v
+    ldx #>str_tms_t1_v
+    jsr vdp_puts
+
     lda #<str_tms_t1
     ldx #>str_tms_t1
     jsr ROM_GETS
     jsr tms_test_status
 
     ; Test 2: VRAM write/read $55
+    lda #0
+    ldx #4
+    jsr vdp_gotoxy
+    lda #<str_tms_t2_v
+    ldx #>str_tms_t2_v
+    jsr vdp_puts
+
     lda #<str_tms_t2
     ldx #>str_tms_t2
     jsr ROM_GETS
@@ -101,6 +133,13 @@ start:
     jsr tms_test_vram
 
     ; Test 3: VRAM write/read $AA
+    lda #0
+    ldx #5
+    jsr vdp_gotoxy
+    lda #<str_tms_t3_v
+    ldx #>str_tms_t3_v
+    jsr vdp_puts
+
     lda #<str_tms_t3
     ldx #>str_tms_t3
     jsr ROM_GETS
@@ -108,6 +147,21 @@ start:
     jsr tms_test_vram
 
     ; ===== SAA1099 test =====
+
+    ; Hlavicka SAA na VDP (radek 7)
+    lda #0
+    ldx #7
+    jsr vdp_gotoxy
+    lda #<vstr_saa_hdr
+    ldx #>vstr_saa_hdr
+    jsr vdp_puts
+
+    lda #0
+    ldx #8
+    jsr vdp_gotoxy
+    lda #<str_saa_t4_v
+    ldx #>str_saa_t4_v
+    jsr vdp_puts
 
     lda #<str_saa_hdr
     ldx #>str_saa_hdr
@@ -120,16 +174,34 @@ start:
     lda totfail
     bne @fail
 
-    lda #$21            ; fg=2 medium green = PASS
-    jsr vdp_setup_screen
+    ; PASS na VDP (radek 11)
+    lda #0
+    ldx #11
+    jsr vdp_gotoxy
+    lda #<vstr_pass
+    ldx #>vstr_pass
+    jsr vdp_puts
+
     lda #<str_pass
     ldx #>str_pass
     jsr ROM_GETS
     jmp ROM_RST
 
 @fail:
-    lda #$81            ; fg=8 medium red = FAIL
-    jsr vdp_setup_screen
+    ; FAIL na VDP (radek 11)
+    lda #0
+    ldx #11
+    jsr vdp_gotoxy
+    lda #<vstr_fail
+    ldx #>vstr_fail
+    jsr vdp_puts
+    ; pocet selhanich
+    lda #17
+    ldx #11
+    jsr vdp_gotoxy
+    lda totfail
+    jsr vdp_prtbyte
+
     lda #<str_fail_a
     ldx #>str_fail_a
     jsr ROM_GETS
@@ -170,6 +242,13 @@ tms_test_status:
     lda #<str_ok_nl
     ldx #>str_ok_nl
     jsr ROM_GETS
+    ; VDP: "$XX OK" na radku 3 sloupec 22
+    lda #22
+    ldx vdp_row         ; vdp_row stale ukazuje na radek 3 (nastaveno pred volanim)
+    jsr vdp_gotoxy
+    lda #<vstr_ok
+    ldx #>vstr_ok
+    jsr vdp_puts
     rts
 
 @fail:
@@ -177,6 +256,12 @@ tms_test_status:
     lda #<str_fail_nl
     ldx #>str_fail_nl
     jsr ROM_GETS
+    lda #22
+    ldx vdp_row
+    jsr vdp_gotoxy
+    lda #<vstr_fail_s
+    ldx #>vstr_fail_s
+    jsr vdp_puts
     rts
 
 
@@ -243,6 +328,12 @@ tms_test_vram:
     lda #<str_ok_nl
     ldx #>str_ok_nl
     jsr ROM_GETS
+    lda #22
+    ldx vdp_row
+    jsr vdp_gotoxy
+    lda #<vstr_ok
+    ldx #>vstr_ok
+    jsr vdp_puts
     rts
 
 @fail:
@@ -250,6 +341,12 @@ tms_test_vram:
     lda #<str_fail_nl
     ldx #>str_fail_nl
     jsr ROM_GETS
+    lda #22
+    ldx vdp_row
+    jsr vdp_gotoxy
+    lda #<vstr_fail_s
+    ldx #>vstr_fail_s
+    jsr vdp_puts
     rts
 
 
@@ -563,6 +660,19 @@ note_freq:
     .byte 132           ; F (index 5)
     .byte 173           ; G (index 7)
     .byte 210           ; A (index 9)
+
+; VDP display strings (pouze ASCII $20-$5F, max 32 znaku na radek)
+vstr_title:     .byte "P65 CHIPTEST V1.0",0
+vstr_tms_hdr:   .byte "TMS9918A VDP $C000:",0
+vstr_saa_hdr:   .byte "SAA1099 $CD00:",0
+str_tms_t1_v:   .byte "  [1] STATUS",0
+str_tms_t2_v:   .byte "  [2] VRAM $55",0
+str_tms_t3_v:   .byte "  [3] VRAM $AA",0
+str_saa_t4_v:   .byte "  [4] SCALE C-A",0
+vstr_ok:        .byte "OK",0
+vstr_fail_s:    .byte "FAIL",0
+vstr_pass:      .byte ">>> PASS <<<",0
+vstr_fail:      .byte ">>> FAIL: ",0
 
 str_banner:
     .byte $0D,$0A

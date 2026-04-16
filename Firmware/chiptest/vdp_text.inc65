@@ -1,0 +1,375 @@
+; vdp_text.inc65 — TMS9918A textovy vystup pro P65 chiptest
+;
+; VDP VRAM layout (pattern base R4=$01 -> $0800):
+;   $0800      Tile $00  solid block (8x$FF)  — pozadi/border
+;   $0900-$0AFF Tile $20-$5F  ASCII font (space..underscore)
+;   $1400-$16FF Name table  32x24  (R2=$05)
+;   $2000-$201F Color table 32 B   (R3=$80)  vsechny = $F4 white/dark-blue
+;
+; ZP promenne:
+;   vdp_col = $75   aktualni sloupec (0-31)
+;   vdp_row = $76   aktualni radek   (0-23)
+;
+; Pouziva ZP: ptr($70/$71), tmp($73) — sdileno s chiptest.asm
+; ---------------------------------------------------------------------------
+
+vdp_col  = $75
+vdp_row  = $76
+
+; ── CODE section ────────────────────────────────────────────────────────────
+.segment "CODE"
+
+; ---------------------------------------------------------------------------
+; vdp_init_text
+; Plna inicializace: solid tile, font, color table, name table (mezery), regs.
+; ---------------------------------------------------------------------------
+vdp_init_text:
+    sei
+
+    ; Tile 0: solid block — 8x$FF na VRAM $0800
+    lda #$00
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$48            ; ($0800>>8)|$40 = $48
+    sta VDP_CTRL
+    jsr vdp_nop
+    ldx #8
+@vit_t0:
+    lda #$FF
+    sta VDP_DATA
+    jsr vdp_nop
+    dex
+    bne @vit_t0
+
+    ; Font ASCII $20-$5F -> VRAM $0900 (= pattern_base + $20*8 = $0800+$100)
+    lda #$00
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$49            ; ($0900>>8)|$40 = $49
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #<vdp_font_data
+    sta ptr
+    lda #>vdp_font_data
+    sta ptr+1
+    ldx #2              ; 2x 256 = 512 bajtu (64 znaku x 8 radku)
+@vit_fpg:
+    ldy #0
+@vit_fby:
+    lda (ptr),y
+    sta VDP_DATA
+    iny
+    bne @vit_fby
+    inc ptr+1
+    dex
+    bne @vit_fpg
+
+    ; Color table: 32x $F4 (white fg=F, dark blue bg=4) na VRAM $2000
+    lda #$00
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$60            ; ($2000>>8)|$40 = $60
+    sta VDP_CTRL
+    jsr vdp_nop
+    ldx #32
+@vit_ct:
+    lda #$F4
+    sta VDP_DATA
+    jsr vdp_nop
+    dex
+    bne @vit_ct
+
+    ; Name table: 768x $20 (space = prazdna obrazovka) na VRAM $1400
+    lda #$00
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$54            ; ($1400>>8)|$40 = $54
+    sta VDP_CTRL
+    jsr vdp_nop
+    ldx #3              ; 3x256 = 768 bajtu
+@vit_npg:
+    ldy #0
+@vit_nby:
+    lda #$20
+    sta VDP_DATA
+    iny
+    bne @vit_nby
+    dex
+    bne @vit_npg
+
+    ; VDP registry: G1, 16K, screen on, name=$1400, color=$2000, pat=$0800
+    lda #$00
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$80            ; R0 = $00
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$C0
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$81            ; R1 = $C0 (16K, screen on)
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$05
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$82            ; R2 = $05 (name $1400)
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$80
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$83            ; R3 = $80 (color $2000)
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$01
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda #$84            ; R4 = $01 (pattern $0800)
+    sta VDP_CTRL
+    jsr vdp_nop
+
+    stz vdp_col
+    stz vdp_row
+
+    cli
+    rts
+
+; ---------------------------------------------------------------------------
+; vdp_gotoxy  A=col (0-31), X=row (0-23)
+; ---------------------------------------------------------------------------
+vdp_gotoxy:
+    sta vdp_col
+    stx vdp_row
+    rts
+
+; ---------------------------------------------------------------------------
+; vdp_set_addr
+; Nastavi VRAM write adresu pro pozici (vdp_col, vdp_row).
+; Adresa = $1400 + vdp_row*32 + vdp_col
+; Interní: pouziva ptr, tmp
+; ---------------------------------------------------------------------------
+vdp_set_addr:
+    ; row*32: hi = row>>3, lo = row<<5
+    lda vdp_row
+    lsr
+    lsr
+    lsr
+    sta tmp             ; hi = row>>3
+    lda vdp_row
+    asl
+    asl
+    asl
+    asl
+    asl                 ; lo = row<<5 (row 0-23 fits)
+    clc
+    adc vdp_col
+    sta ptr             ; lo = row<<5 + col
+    lda tmp
+    adc #$14            ; hi = (row>>3) + $14 (+carry from lo)
+    sta ptr+1
+    ; nastaveni VRAM adresy
+    lda ptr
+    sta VDP_CTRL
+    jsr vdp_nop
+    lda ptr+1
+    ora #$40            ; write mode
+    sta VDP_CTRL
+    jsr vdp_nop
+    rts
+
+; ---------------------------------------------------------------------------
+; vdp_putc  A = ASCII znak (pouze $20-$5F)
+; Vypise znak na (vdp_col, vdp_row), posune kurzor doprava.
+; Na konci radku (col=32) preskoci na dalsi radek.
+; ---------------------------------------------------------------------------
+vdp_putc:
+    pha
+    jsr vdp_set_addr
+    pla
+    and #$7F            ; jen 7-bit ASCII
+    sta VDP_DATA
+    inc vdp_col
+    lda vdp_col
+    cmp #32
+    bcc @vpc_done
+    stz vdp_col
+    inc vdp_row
+    lda vdp_row
+    cmp #24
+    bcc @vpc_done
+    stz vdp_row
+@vpc_done:
+    rts
+
+; ---------------------------------------------------------------------------
+; vdp_puts  A=<str, X=>str  (null-terminated, max 255 znaku)
+; ---------------------------------------------------------------------------
+vdp_puts:
+    sta ptr
+    stx ptr+1
+    ldy #0
+@vps_loop:
+    lda (ptr),y
+    beq @vps_done
+    jsr vdp_putc
+    iny
+    bne @vps_loop
+@vps_done:
+    rts
+
+; ---------------------------------------------------------------------------
+; vdp_prtbyte  A = bajt -> vypise 2 hex znaky na obrazovce
+; ---------------------------------------------------------------------------
+vdp_prtbyte:
+    pha
+    lsr
+    lsr
+    lsr
+    lsr
+    jsr @vhex
+    pla
+    and #$0F
+@vhex:
+    ora #$30
+    cmp #$3A
+    bcc @vhex_dig
+    adc #$06            ; 'A'-'9'-1=7, carry=1 => +7
+@vhex_dig:
+    jmp vdp_putc
+
+; ── RODATA section — font data ───────────────────────────────────────────────
+.segment "RODATA"
+
+; 8x8 bitmap font, ASCII $20 (space) .. $5F (underscore)
+; 64 znaku x 8 radku = 512 bajtu
+; Bit 7 = levy pixel, bit 0 = pravy pixel.
+vdp_font_data:
+; $20 space
+    .byte $00,$00,$00,$00,$00,$00,$00,$00
+; $21 !
+    .byte $10,$10,$10,$10,$10,$00,$10,$00
+; $22 "
+    .byte $28,$28,$00,$00,$00,$00,$00,$00
+; $23 #
+    .byte $28,$7C,$28,$28,$7C,$28,$00,$00
+; $24 $
+    .byte $10,$3C,$50,$38,$14,$78,$10,$00
+; $25 %
+    .byte $60,$64,$08,$10,$26,$06,$00,$00
+; $26 &
+    .byte $30,$48,$50,$20,$54,$48,$34,$00
+; $27 '
+    .byte $18,$18,$10,$00,$00,$00,$00,$00
+; $28 (
+    .byte $08,$10,$20,$20,$20,$10,$08,$00
+; $29 )
+    .byte $20,$10,$08,$08,$08,$10,$20,$00
+; $2A *
+    .byte $00,$28,$1C,$3E,$1C,$28,$00,$00
+; $2B +
+    .byte $00,$10,$10,$7C,$10,$10,$00,$00
+; $2C ,
+    .byte $00,$00,$00,$00,$00,$18,$18,$10
+; $2D -
+    .byte $00,$00,$00,$7C,$00,$00,$00,$00
+; $2E .
+    .byte $00,$00,$00,$00,$00,$18,$18,$00
+; $2F /
+    .byte $04,$04,$08,$10,$20,$40,$40,$00
+; $30 0
+    .byte $38,$44,$4C,$54,$64,$44,$38,$00
+; $31 1
+    .byte $10,$30,$10,$10,$10,$10,$7C,$00
+; $32 2
+    .byte $38,$44,$04,$18,$20,$40,$7C,$00
+; $33 3
+    .byte $7C,$08,$10,$0C,$04,$44,$38,$00
+; $34 4
+    .byte $08,$18,$28,$48,$7C,$08,$08,$00
+; $35 5
+    .byte $7C,$40,$78,$04,$04,$44,$38,$00
+; $36 6
+    .byte $18,$20,$40,$78,$44,$44,$38,$00
+; $37 7
+    .byte $7C,$44,$04,$08,$10,$10,$10,$00
+; $38 8
+    .byte $38,$44,$44,$38,$44,$44,$38,$00
+; $39 9
+    .byte $38,$44,$44,$3C,$04,$08,$30,$00
+; $3A :
+    .byte $00,$18,$18,$00,$18,$18,$00,$00
+; $3B ;
+    .byte $00,$18,$18,$00,$18,$18,$30,$00
+; $3C <
+    .byte $04,$08,$10,$20,$10,$08,$04,$00
+; $3D =
+    .byte $00,$00,$7C,$00,$7C,$00,$00,$00
+; $3E >
+    .byte $20,$10,$08,$04,$08,$10,$20,$00
+; $3F ?
+    .byte $38,$44,$04,$08,$10,$00,$10,$00
+; $40 @
+    .byte $38,$44,$4E,$5A,$4E,$40,$38,$00
+; $41 A
+    .byte $10,$28,$44,$44,$7C,$44,$44,$00
+; $42 B
+    .byte $78,$44,$44,$78,$44,$44,$78,$00
+; $43 C
+    .byte $38,$44,$40,$40,$40,$44,$38,$00
+; $44 D
+    .byte $70,$48,$44,$44,$44,$48,$70,$00
+; $45 E
+    .byte $7C,$40,$40,$78,$40,$40,$7C,$00
+; $46 F
+    .byte $7C,$40,$40,$78,$40,$40,$40,$00
+; $47 G
+    .byte $38,$44,$40,$4C,$44,$44,$3C,$00
+; $48 H
+    .byte $44,$44,$44,$7C,$44,$44,$44,$00
+; $49 I
+    .byte $38,$10,$10,$10,$10,$10,$38,$00
+; $4A J
+    .byte $1C,$04,$04,$04,$04,$44,$38,$00
+; $4B K
+    .byte $44,$48,$50,$60,$50,$48,$44,$00
+; $4C L
+    .byte $40,$40,$40,$40,$40,$40,$7C,$00
+; $4D M
+    .byte $44,$6C,$54,$44,$44,$44,$44,$00
+; $4E N
+    .byte $44,$64,$54,$4C,$44,$44,$44,$00
+; $4F O
+    .byte $38,$44,$44,$44,$44,$44,$38,$00
+; $50 P
+    .byte $78,$44,$44,$78,$40,$40,$40,$00
+; $51 Q
+    .byte $38,$44,$44,$44,$54,$48,$34,$00
+; $52 R
+    .byte $78,$44,$44,$78,$48,$44,$44,$00
+; $53 S
+    .byte $38,$44,$40,$38,$04,$44,$38,$00
+; $54 T
+    .byte $7C,$10,$10,$10,$10,$10,$10,$00
+; $55 U
+    .byte $44,$44,$44,$44,$44,$44,$38,$00
+; $56 V
+    .byte $44,$44,$44,$28,$28,$10,$10,$00
+; $57 W
+    .byte $44,$44,$44,$54,$54,$6C,$44,$00
+; $58 X
+    .byte $44,$44,$28,$10,$28,$44,$44,$00
+; $59 Y
+    .byte $44,$44,$28,$10,$10,$10,$10,$00
+; $5A Z
+    .byte $7C,$04,$08,$10,$20,$40,$7C,$00
+; $5B [
+    .byte $38,$20,$20,$20,$20,$20,$38,$00
+; $5C backslash
+    .byte $40,$20,$10,$08,$04,$02,$02,$00
+; $5D ]
+    .byte $38,$08,$08,$08,$08,$08,$38,$00
+; $5E ^
+    .byte $10,$28,$44,$00,$00,$00,$00,$00
+; $5F _
+    .byte $00,$00,$00,$00,$00,$00,$00,$7C
