@@ -109,7 +109,12 @@
       "Bash(cmd.exe /c \"cd /d c:\\\\Users\\\\adolf\\\\GIT\\\\Project65\\\\Firmware && build_appartus.bat\")",
       "Bash(ca65 --cpu 65c02 main_appartus.c -o /dev/null)",
       "Bash(echo \"cc65 done: $?\")",
-      "Bash(grep -n \"zeropage\\\\|\\\\.res\\\\|= \\\\$\\\\|\\\\.org\\\\|importzp\\\\|exportzp\" \"c:/Users/adolf/GIT/Project65/Firmware/src/ihex.asm\")"
+      "Bash(grep -n \"zeropage\\\\|\\\\.res\\\\|= \\\\$\\\\|\\\\.org\\\\|importzp\\\\|exportzp\" \"c:/Users/adolf/GIT/Project65/Firmware/src/ihex.asm\")",
+      "Bash(cmd /c \"cd /d C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware && build_appartus.bat\")",
+      "Bash(powershell -Command \"Set-Location 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware'; cmd /c build_appartus.bat 2>&1\")",
+      "Bash(powershell -Command \"Set-Location 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware'; & cmd.exe /c 'build_appartus.bat'\")",
+      "Bash(powershell -Command \"& 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware\\\\\\\\build_appartus.bat'\")",
+      "Bash(powershell -Command \"Set-Location 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware'; & .\\\\build_appartus.bat\")"
     ]
   }
 }

@@ -1637,6 +1637,7 @@ _bas_primary:
     RTS
 @pr_not_peek:
     ; Variable A-Z
+    LDA (bas_ip)        ; reload: _bas_check_kw clobbers A
     CMP #'A'
     BCC @pr_num
     CMP #'Z'+1
@@ -2074,10 +2075,11 @@ _bas_store_line:
     LDA bas_lp+1
     ADC bas_rhs+1
     STA bas_tmp2+1
-    DEC bas_tmp2
-    LDA bas_tmp2+1
-    SBC #0
-    STA bas_tmp2+1   ; src = bas_lp+count-1
+    LDA bas_tmp2        ; proper 16-bit decrement (DEC doesn't affect carry)
+    BNE @sl_dec_lo
+    DEC bas_tmp2+1
+@sl_dec_lo:
+    DEC bas_tmp2        ; src = bas_lp+count-1
     ; dst = bas_tmp2 + bas_tmp (note bas_tmp2 used as src ptr, bas_acc as dst ptr)
     LDA bas_tmp2
     CLC
