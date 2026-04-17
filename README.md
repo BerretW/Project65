@@ -1,344 +1,302 @@
-
 # Project65 — SBC 65C02 IRQ BigBoard
 
-Tento soubor obsahuje kompletní přehled hardwaru desky, adresní mapu a seznam bugů.
-Netlist a BOM **není potřeba znovu zpracovávat** — vše relevantní je zde.
+A fully custom **W65C02-based single-board computer** featuring an 8-priority-level IRQ subsystem, three ISA-8 expansion slots, a PS/2 keyboard interface, RS-232 serial port, and a complete firmware stack — including an interactive OS with a RAM-disk filesystem. Accompanied by a **full-featured Rust emulator** with a terminal UI.
 
 ---
 
-## Hardware — přehled součástek
+## Features
 
-| Reference | Hodnota / Part     | Popis                                                                           |
-| --------- | ------------------ | ------------------------------------------------------------------------------- |
-| IC4       | W65C02SP           | Hlavní CPU (65C02, DIL40)                                                      |
-| IC5       | 28C64AP (AT28C64B) | EEPROM 8 KB — ROM                                                              |
-| IC6       | 62256              | SRAM 32 KB — spodní RAM ($0000–$7FFF), !CS = A15                             |
-| IC7       | 62256              | SRAM 32 KB — horní RAM ($8000–$BFFF), !CS = !HRAM_CS                       |
-| IC8       | DS1233 (SOT223)    | Power-on reset                                                                  |
-| IC16      | W65C22S6TP         | VIA #1 dle schématu → v FW**VIA2_BASE = $CC80**                         |
-| IC18      | W65C22S6TP         | VIA #2 dle schématu → v FW**VIA1_BASE = $CC00**, generuje **NMI** |
-| IC19      | R6551              | Rockwell ACIA, sériová linka                                                  |
-| IC14      | ATtiny26-16PU      | AVR — PS/2 klávesnice (PB3=CLK, PB4=DATA z X4)                                |
-| U$1       | MCP2221A-I/P       | USB-C ↔ UART/I2C bridge (J4)                                                   |
-| IC1       | REG1117 3V3        | LDO regulátor 3,3 V pro USB sekci                                              |
-| IC9       | 74HCT139N          | Dekodér 2. úrovně — IO prostor                                              |
-| IC11      | 74HCT139N          | Dekodér 1. úrovně — horní adresní prostor                                 |
-| IC10      | 74AC00N            | NAND — generuje !MEMR, !MEMW, !A7                                              |
-| IC12      | 74AC00N            | NAND — generuje !ROM_CS (E-F range)                                            |
-| IC21      | 74AC32N            | OR — generuje !AA_CS, !AA_CS_WR, !IRQ_CS                                       |
-| IC2, IC3  | 74HC74N            | D flip-flopy — dělička hodin (32→16→8→4→2 MHz)                           |
-| IC17      | 74HC148N           | Priority encoder (8→3) — IRQ logika                                           |
-| IC27      | 74HC574N           | 8-bit latch — IRQ stavový registr pro CPU                                     |
-| Q1        | 1,8432 MHz         | Krystal pro ACIA (přesné baudové rychlosti)                                  |
-| QG1       | 32 MHz             | Hlavní systémový oscilátor                                                  |
-| X1–X3    | ISA-SLOT (ISA-8)   | Tři ISA-8 sloty                                                                |
-| J3        | DB9 Male           | Sériový port RS-232                                                           |
-| J4        | USB-C 16P          | USB-C konektor                                                                  |
-| X4        | Mini DIN 6         | PS/2 konektor (klávesnice)                                                     |
-
-### ISA expanzní karty (v Eagle/)
-
-- `EXP_TMS9918A_V1` — TMS9918A video karta
-- `EXP_GameDuino_V1` — GameDuino grafická karta
+- **CPU:** W65C02S @ up to 8 MHz (jumper-selectable from 32 MHz main oscillator)
+- **Memory:** 64 KB total — 32 KB lower RAM + 32 KB upper RAM + 8 KB EEPROM ROM
+- **Serial:** R6551 ACIA with a 1.8432 MHz crystal for accurate baud rates
+- **Parallel I/O:** 2× W65C22S VIA controllers (keyboard polling + parallel port)
+- **PS/2 Keyboard:** ATtiny26 co-processor bridge
+- **Interrupt system:** 74HC148 priority encoder + 74HC574 latch — 8 prioritized IRQ lines + NMI
+- **Expansion:** 3× ISA-8 slots (TMS9918A video card, GameDuino graphics card)
+- **Firmware:** Two build targets — minimal bootloader and full AppartusOS
+- **Emulator:** Rust TUI emulator (`p65emu`) with cycle-accurate peripherals
 
 ---
 
-## Adresní mapa (rekonstruováno z netlisu v10-2-1)
+## Repository Structure
 
-```
-$0000–$7FFF   IC6 RAM (32 KB)    !CS = A15 přímo; aktivní kdykoli A15=0
-$8000–$BFFF   IC7 RAM (32 KB)    !CS = !HRAM_CS  (A15=1, A14=0)
-$C000–$C3FF   VERA / ISA video   !VERA_CS  (IC9 Y0: A11=0, A10=0 v IO prostoru)
-$C400–$C7FF   IRQ latch          !$C4-7    (IC9 Y1: A11=0, A10=1)
-                                   čtení IC27 na $C480–$C4FF (A7=1)
-                                   zápis/ACK na $C400–$C47F  (A7=0)
-$C800–$CBFF   ACIA R6551         !ACIA_CS  (IC9 Y2: A11=1, A10=0)
-$CC00–$CC7F   VIA1 FW (IC18)     !VIA_CS + A7=0  ← ATtiny26, NMI zdroj
-$CC80–$CCFF   VIA2 FW (IC16)     !VIA_CS + A7=1  ← JP8 parallel port, IRQ1 zdroj
-$CD00–$CDFF   ISA DEV0           !DEV0_CS (IC9 sec2 Y1: A9=0, A8=1)
-$CE00–$CEFF   ISA DEV1           !DEV1_CS (IC9 sec2 Y2: A9=1, A8=0)
-$CF00–$CFFF   ISA DEV2           !DEV2_CS (IC9 sec2 Y3: A9=1, A8=1)
-$D000–$DFFF   ISA extended       !$DXXX_CS (IC11 sec2 Y1: A13=0, A12=1)
-$E000–$FFFF   EEPROM ROM (8 KB)  !ROM_CS  (IC12 NAND: E-F range, A13=1 v C-F)
-```
-
-### Dekódovací logika (stručně)
-
-```
-IC11 sekce 1 (A=A14, B=A15, G=GND — vždy povoleno):
-  Y2 → !HRAM_CS  ($8000–$BFFF)
-  Y3 → !C-F      ($C000–$FFFF, povoluje IC11 sekci 2)
-
-IC11 sekce 2 (A=A12, B=A13, G=!C-F):
-  Y0 → !IO_CS    ($C000–$CFFF, povoluje IC9)
-  Y1 → !$DXXX_CS ($D000–$DFFF)
-
-IC9 sekce 1 (A=A10, B=A11, G=!IO_CS):
-  Y0 → !VERA_CS  ($C000–$C3FF)
-  Y1 → !$C4-7    ($C400–$C7FF)
-  Y2 → !ACIA_CS  ($C800–$CBFF)
-  Y3 → !OTHER_CS ($CC00–$CFFF, povoluje IC9 sekci 2)
-
-IC9 sekce 2 (A=A8, B=A9, G=!OTHER_CS):
-  Y0 → !VIA_CS   ($CC00–$CCFF, dále děleno A7)
-  Y1 → !DEV0_CS  ($CD00–$CDFF)
-  Y2 → !DEV1_CS  ($CE00–$CEFF)
-  Y3 → !DEV2_CS  ($CF00–$CFFF)
-
-VIA výběr uvnitř $CC00–$CCFF:
-  IC18 CS1 = !A7  → aktivní $CC00–$CC7F  (FW: VIA1_BASE = $CC00)
-  IC16 CS1 =  A7  → aktivní $CC80–$CCFF  (FW: VIA2_BASE = $CC80)
+```text
+Project65/
+├── Eagle/              # PCB schematics and board layouts (Eagle CAD)
+│   ├── SBC_65C02_IRQ_BigBoard_v10-2-1.*
+│   ├── EXP_TMS9918A_V1.*
+│   └── EXP_GameDuino_V1.*
+├── Firmware/           # 65C02 firmware (cc65 / ca65 toolchain)
+│   ├── src/            # Assembly + C sources (drivers, OS, shell, EWOZ)
+│   │   └── os/         # AppartusOS modules
+│   ├── config/         # ld65 linker configurations
+│   ├── output/         # Build artifacts (*.bin, *.map)
+│   ├── build_minimal.bat
+│   └── build_appartus.bat
+├── emulator/           # Rust emulator (p65emu)
+│   └── src/            # cpu, bus, ram, rom, acia, via, irq_latch, tui
+├── tools/
+│   └── uploader.py     # Python/tkinter firmware uploader (COM or TCP)
+└── CLAUDE.md           # Full hardware reference (address map, ICs, bugs)
 ```
 
 ---
 
-## IO adresy (z io.inc65)
+## Hardware Overview
 
-```
-ACIA_BASE    = $C800   ← správně
-VIA1_BASE    = $CC00   ← fyzicky IC18 (schéma říká VIA2!) — NMI zdroj, ATtiny
-VIA2_BASE    = $CC80   ← fyzicky IC16 (schéma říká VIA1!) — JP8 parallel port
-VDP_MODE0    = $7F10   ← POZOR: leží v IC6 RAM prostoru, viz bug #4
-```
+| Reference | Part | Description |
+| --------- | ---- | ----------- |
+| IC4 | W65C02SP | Main CPU (CMOS 65C02, DIP-40) |
+| IC5 | AT28C64B | 8 KB EEPROM — ROM (`$E000–$FFFF`) |
+| IC6 | 62256 | 32 KB SRAM — lower RAM (`$0000–$7FFF`) |
+| IC7 | 62256 | 32 KB SRAM — upper RAM (`$8000–$BFFF`) |
+| IC8 | DS1233 | Power-on reset supervisor |
+| IC16 | W65C22S6TP | VIA #2 (`$CC80`) — parallel port JP8, generates **IRQ1** |
+| IC18 | W65C22S6TP | VIA #1 (`$CC00`) — ATtiny26 keyboard bridge, generates **NMI** |
+| IC19 | R6551 | ACIA serial (`$C800–$CBFF`) |
+| IC14 | ATtiny26 | PS/2 keyboard co-processor (PB3=CLK, PB4=DATA) |
+| U$1 | MCP2221A | USB-C ↔ UART/I²C bridge |
+| IC9/IC11 | 74HCT139N | Two-stage address decoder |
+| IC17 | 74HC148N | 8→3 priority IRQ encoder |
+| IC27 | 74HC574N | IRQ status latch (readable at `$C480`) |
+| QG1 | 32 MHz | Main system oscillator |
+| Q1 | 1.8432 MHz | ACIA baud-rate crystal |
+| X1–X3 | ISA-8 slots | Three 8-bit ISA expansion slots |
 
-### POZOR — záměna názvů VIA
+### ISA Expansion Cards
 
-Schéma označuje IC16 jako „VIA1" a IC18 jako „VIA2", ale firmware má VIA1/VIA2 prohozeny:
-
-| FW symbol | Adresa | Fyzický čip | Schéma | Připojení                                   |
-| --------- | ------ | ------------- | ------- | --------------------------------------------- |
-| VIA1      | $CC00  | IC18          | „VIA2" | ATtiny26 (klávesnice), generuje**NMI** |
-| VIA2      | $CC80  | IC16          | „VIA1" | JP8 parallel port, generuje**IRQ1**     |
-
----
-
-## IRQ systém
-
-| Signál       | Zdroj                                 | Priorita (IC17) |
-| ------------- | ------------------------------------- | --------------- |
-| IRQ0          | IC19 R6551 ACIA                       | 0 (nejvyšší) |
-| IRQ1          | IC16 !IRQB (FW VIA2, $CC80)           | 1               |
-| IRQ2–6       | ISA sloty                             | 2–6            |
-| IRQ7          | S1 (tlačítko)                       | 7 (nejnižší) |
-| **NMI** | **IC18 !IRQB (FW VIA1, $CC00)** | — (nemaskable) |
-
-IC17 (74HC148) kóduje aktivní IRQ do 3 bitů → IC27 (latch) → čitelné CPU na $C480–$C4FF.
+| Card | Description |
+| ---- | ----------- |
+| `EXP_TMS9918A_V1` | TMS9918A video card |
+| `EXP_GameDuino_V1` | GameDuino graphics card |
 
 ---
 
-## Hodiny
+## Address Map
 
-IC2+IC3 (74HC74 děličky) z QG1 32 MHz generují: 16 / 8 / 4 / 2 MHz.
-Volba CPU taktu přes jumper JP2–JP5.
-Q1 1,8432 MHz — přiveden přímo do ACIA (přesné baudové rychlosti).
+```text
+$0000–$7FFF   IC6 SRAM — lower 32 KB       (!CS = A15 low)
+$8000–$BFFF   IC7 SRAM — upper 32 KB       (!CS = !HRAM_CS)
+$C000–$C3FF   VERA / ISA video             (!VERA_CS)
+$C400–$C7FF   IRQ latch                    read $C480–$C4FF / ack $C400–$C47F
+$C800–$CBFF   ACIA R6551
+$CC00–$CC7F   VIA1 (IC18) — keyboard/NMI
+$CC80–$CCFF   VIA2 (IC16) — parallel/IRQ1
+$CD00–$CFFF   ISA DEV0 / DEV1 / DEV2
+$D000–$DFFF   ISA extended
+$E000–$FFFF   EEPROM ROM (8 KB)
+```
+
+### IRQ Priority Table
+
+| Level | Signal | Source |
+| ----- | ------ | ------ |
+| 0 (highest) | IRQ0 | R6551 ACIA |
+| 1 | IRQ1 | VIA2 (IC16, `$CC80`) |
+| 2–6 | IRQ2–6 | ISA slots |
+| 7 (lowest) | IRQ7 | Button S1 |
+| — | **NMI** | **VIA1 (IC18, `$CC00`)** |
 
 ---
 
-## Firmware — minimal build
+## Firmware
 
-**Soubory:** `build_minimal.bat` → `config/MIN_ROM.cfg` → `output/MIN_ROM.bin`
+### Prerequisites
 
-**Paměťová mapa linkeru (MIN_ROM.cfg):**
+- [cc65](https://cc65.github.io/) toolchain (`cc65`, `ca65`, `ld65`) on `PATH`
 
+### Minimal Build
+
+ACIA serial + EWOZ (WozMon) monitor + serial bootloader (loads to `$6000`).  
+No keyboard, VDP, SPI, SD, GameDuino, or SAA1099 dependencies.
+
+```bat
+cd Firmware
+build_minimal.bat
 ```
-ZP:  $0000–$00FF   (zero page)
-RAM: $0200–$5FFF   (pracovní RAM, stack na $5FFF roste dolů)
-ROM: $E000–$FFFF   (EEPROM, fill $FF)
-JMPTBL: $FF00      (jump tabulka)
-VECTORS: $FFFA     (NMI/RESET/IRQ vektory)
+
+Output: `Firmware/output/MIN_ROM.bin` (8 KB, write to EEPROM IC5)
+
+### AppartusOS Build
+
+Full OS: ACIA + EWOZ (`MON` command) + Intel HEX loader + interactive shell + RAM-disk FS.
+
+```bat
+cd Firmware
+build_appartus.bat
 ```
 
-**Obsah minimal buildu:** ACIA serial + WozMon (EWOZ) + sériový bootloader do $6000.
-Klávesnice, VDP, SPI, SD, GameDuino, SAA1099 — **v minimal buildu nejsou**.
+Output: `Firmware/output/APPARTUS_OS.bin` (8 KB, write to EEPROM IC5)
+
+### AppartusOS Shell Commands
+
+```text
+HELP / ?                   — help
+VER                        — OS version
+DIR                        — list RAM-disk files
+FREE                       — show free space
+FORMAT                     — reinitialize RAM disk (requires Y confirmation)
+LOAD                       — receive Intel HEX via ACIA
+SAVE <name> <addr> <size>  — save RAM region to RAM disk (hex addresses)
+DEL  <name>                — delete file
+RUN  <name>                — execute file (program can RTS back to shell)
+MON                        — EWOZ / WozMon monitor
+RESET                      — soft reset ($FF00)
+```
+
+### RAM Disk Layout (`$6000–$BFFF`, 24 KB)
+
+```text
+$6000–$600F   Header: "APOS" + num_files + free_ptr
+$6010–$610F   Directory: 16 entries × 16 bytes
+              +0 name[8]  +8 load_addr  +10 size  +12 flags  +13 stor_addr
+$6110–$BFFF   File data (~24 KB usable)
+```
+
+### Firmware Memory Map (ROM, `$E000–$FFFF`)
+
+```text
+ZP:      $0000–$00FF   (zero page; cc65 $00–$1F, EWOZ $24–$30, ihex $38–$3E, OS $40–$4E)
+RAM:     $0200–$5FFF   (working RAM; stack at $5FFF growing down)
+ROM:     $E000–$FFFF   (EEPROM, fill $FF)
+JMPTBL:  $FF00         (BIOS-style jump table)
+VECTORS: $FFFA         (NMI / RESET / IRQ vectors)
+```
 
 ---
 
-## TODO — oprava bugů
+## Emulator — p65emu
 
-### Bug #1 — `_nmi_init` konfiguruje špatné VIA
+A cycle-accurate Rust emulator with a ratatui terminal UI.
 
-**Soubor:** `Firmware/src/utils.asm` řádky 72–78
+### Prerequisites
 
-```asm
-; ŠPATNĚ (aktuální stav):
-_nmi_init:  STA VIA2_T1C_H   ; IC16 — ten NMI NEgeneruje!
-            STA VIA2_ACR
-            STA VIA2_IER
+- [Rust toolchain](https://rustup.rs/) (stable)
 
-; SPRÁVNĚ (opravit na):
-_nmi_init:  STA VIA1_T1C_H   ; IC18 — ten generuje NMI (!IRQB → CPU NMIB)
-            STA VIA1_ACR
-            STA VIA1_IER
-```
+### Build & Run
 
-**Dopad:** NMI timer nikdy nevznikne. V minimal buildu nevadí (NMI_Event je prázdné),
-ale v plném firmware s klávesnicí pollingem přes NMI je to kritická chyba.
-
----
-
-### Bug #2 — NMI ISR reloaduje špatné VIA ✅ OPRAVENO
-
-**Soubor:** `Firmware/src/interrupts.asm` řádek 19
-
-```asm
-; OPRAVENO:
-STA VIA1_T1C_H    ; Bug #2 fix: NMI generuje VIA1 (IC18), ne VIA2
-```
-
-Zároveň odstraněn `CLI` před `RTI` v `_IRQ_ISR` — RTI obnoví I-flag ze zásobníku automaticky.
-
----
-
-### Bug #3 — klávesnicový driver čte ze špatného VIA
-
-**Soubor:** `Firmware/src/pckybd.asm` řádky 25–28
-
-```asm
-; ŠPATNĚ (aktuální):
-kb_data_or  = VIA2_ORA   ; $CC81 = IC16, nemá ATtiny!
-kb_data_ddr = VIA2_DDRA
-kb_stat_or  = VIA2_ORB
-kb_stat_ddr = VIA2_DDRB
-
-; SPRÁVNĚ (opravit na):
-kb_data_or  = VIA1_ORA   ; $CC01 = IC18, tam je ATtiny26
-kb_data_ddr = VIA1_DDRA
-kb_stat_or  = VIA1_ORB
-kb_stat_ddr = VIA1_DDRB
-```
-
-**Dopad:** Klávesnice nefunguje — driver mluví s IC16 (parallel port JP8), ne s IC18 (ATtiny26).
-**Priorita:** Neopravovat dokud není Bug #1+#2 opraveno. Netýká se minimal buildu.
-
----
-
-### Bug #4 — VDP adresa konfliktuje s RAM
-
-**Soubor:** `Firmware/src/io.inc65` řádek 154
-
-```asm
-VDP_MODE0 = $7F10   ; A15=0 → IC6 RAM range!
-```
-
-$7F10 leží v IC6 RAM oblasti ($0000–$7FFF). IC6 !CS = A15 přímo, tedy IC6 reaguje
-na $7F10 vždy. TMS9918A na ISA kartě by soutěžil s IC6 na datové sběrnici.
-
-**Co ověřit:** Prohlédnout schéma `Eagle/EXP_TMS9918A_V1.sch` — zjistit jak karta
-dekóduje svou CS adresu. Pokud karta neodpojuje IC6 při přístupu, je nutné
-VDP přesunout do IO prostoru ($C000–$CFFF) nebo použít !VERA_CS ($C000–$C3FF).
-**Priorita:** Neřešit dokud není hardware ověřen fyzicky.
-
----
-
-## Emulátor — p65emu
-
-**Umístění:** `emulator/` — Rust, TUI pomocí ratatui + crossterm.
-
-**Spuštění:**
-
-```
+```sh
 cargo run --manifest-path emulator/Cargo.toml -- [ROM.bin] [-s SPEED_HZ] [-p TCP_PORT]
 ```
 
-Výchozí rychlost: 1 MHz. Výchozí TCP port: 6551 (0 = zakázáno).
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `ROM.bin` | — | ROM image to load at `$E000` |
+| `-s SPEED_HZ` | `1000000` | Emulation speed in Hz |
+| `-p TCP_PORT` | `6551` | TCP serial port (0 = disabled) |
+| `--family` | `HCT` | Logic family timing model (`LS`, `ALS`, `HCT`, `HC`, `AC`, `ACT`) |
 
-**Emulované komponenty** (`emulator/src/`):
+### Emulated Components
 
-- `cpu.rs` — W65C02 (krok, reset, NMI/IRQ poll, snapshot)
-- `ram.rs` — IC6 ($0000–$7FFF) + IC7 ($8000–$BFFF)
-- `rom.rs` — EEPROM 8 KB ($E000–$FFFF)
-- `acia.rs` — R6551 ($C800–$CBFF), TX/RX fronty sdílené s TUI a TCP
-- `via.rs` — VIA1 ($CC00–$CC7F) + VIA2 ($CC80–$CCFF), T1 timer
-- `irq_latch.rs` — IC27 74HC574 ($C400–$C4FF)
-- `bus.rs` — dekódování adres, `tick()` generuje NMI/IRQ signály
-- `app.rs` — TUI (ratatui), file browser, command channel TUI→CPU vlákno
-- `main.rs` — hlavní vlákno TUI + CPU vlákno + TCP sériový server
+| Module | Hardware |
+| ------ | -------- |
+| `cpu.rs` | W65C02 — fetch/decode/execute + NMI/IRQ |
+| `ram.rs` | IC6 + IC7 SRAM |
+| `rom.rs` | 8 KB EEPROM |
+| `acia.rs` | R6551 — TX/RX queues shared with TUI and TCP |
+| `via.rs` | VIA1 (`$CC00`) + VIA2 (`$CC80`) — T1/T2 timers |
+| `irq_latch.rs` | 74HC574 latch + 74HC148 encoder |
+| `tms9918a.rs` | TMS9918A video (minifb window) |
+| `saa1099.rs` | SAA1099 audio (rodio) |
 
-**TUI klávesy:**
+### TUI Keyboard Shortcuts
 
-| Klávesa     | Akce                                                         |
-| ------------ | ------------------------------------------------------------ |
-| F2           | Jeden krok (step)                                            |
-| F3           | Run / Pause                                                  |
-| F4           | Reset CPU                                                    |
-| F5–F9       | Rychlost: 1K / 10K / 100K / 1M / MAX Hz                      |
-| +/-          | Rychlost ×2 / ÷2                                           |
-| Tab          | Přepnout záložku paměti (ZP/RAM/HiRAM/I/O/ROM/Addr)      |
-| Shift+Tab    | Přepnout záložku pravého panelu (CPU/VIA1/VIA2/ACIA/IRQ) |
-| PgUp/PgDn    | Scroll paměti                                               |
-| Shift+Pg     | Scroll terminálu                                            |
-| Ctrl+O       | File browser — načíst ROM/RAM soubor                      |
-| Ctrl+G       | Zadání hex adresy pro memory dump                          |
-| Ctrl+M       | Editace bajtu v paměti (adresa → hodnota)                  |
-| Ctrl+R       | Editace registrů CPU (A/X/Y/SP/PC/P)                        |
-| F10 / Ctrl+Q | Quit                                                         |
+| Key | Action |
+| --- | ------ |
+| F2 | Single step |
+| F3 | Run / Pause |
+| F4 | Reset CPU |
+| F5–F9 | Speed: 1K / 10K / 100K / 1M / MAX Hz |
+| +/- | Speed ×2 / ÷2 |
+| Tab | Memory view: ZP / RAM / HiRAM / I/O / ROM / Addr |
+| Shift+Tab | Right panel: CPU / VIA1 / VIA2 / ACIA / IRQ |
+| PgUp/PgDn | Scroll memory |
+| Shift+Pg | Scroll terminal |
+| Ctrl+O | File browser — load ROM or RAM image |
+| Ctrl+G | Jump to hex address in memory dump |
+| Ctrl+M | Edit byte at address |
+| Ctrl+R | Edit CPU registers (A/X/Y/SP/PC/P) |
+| F10 / Ctrl+Q | Quit |
 
-**Pravý panel — záložky:**
-
-- **CPU** — registry A/X/Y/SP/PC/P + příznaky
-- **VIA1** — $CC00: ORA/ORB/DDR, T1/T2 čítače, ACR/PCR/IFR/IER
-- **VIA2** — $CC80: totéž pro IC16
-- **ACIA** — $C800: STATUS/COMMAND/CONTROL/RX DATA, baud rate
-- **IRQ** — latch $C480: aktivní bity 0–7, prioritní enkodér
-
-**Výběr rodiny obvodů (`--family`):**
-
-```
-p65emu --family HCT   # default — skutečná deska
-p65emu --family LS    # starší LS logika
-p65emu --family AC    # rychlá AC logika
-```
-
-Rodiny: `LS` (25 ns), `ALS` (11 ns), `HCT` (16 ns), `HC` (12 ns), `AC`/`ACT` (7 ns).
-Titulek emulatoru zobrazuje `[HCT OK]` / `[LS ~MRG]` / `[LS SLOW!]` dle aktuální rychlosti.
-
-Model: 4 stupně dekodéru (IC9+IC11) × tpd + 7 ns (AC brány). Dostupný čas = T/2 − 60 ns.
-
-**TCP sériový port:** emulátor naslouchá na `127.0.0.1:6551` — připojení PuTTY / nc / uploader.py.
+The TCP serial port (default `127.0.0.1:6551`) allows PuTTY, netcat, or `uploader.py` to connect as if it were real hardware.
 
 ---
 
-## Nástroje — tools/
+## Tools
 
-### tools/uploader.py — P65 SBC Uploader
+### tools/uploader.py
 
-Python/tkinter GUI pro nahrávání programů do SBC nebo emulátoru.
+Python/tkinter GUI for uploading firmware to the real board or the emulator.
 
-**Závislosti:** `pip install pyserial`
+**Dependencies:**
+```sh
+pip install pyserial
+```
 
-**Režimy připojení:**
+**Connection modes:**
+- **COM port** — real hardware (19200 Bd, 8N1)
+- **TCP** — emulator (`127.0.0.1:6551`)
 
-- COM port — reálný hardware (19200 Bd, 8N1)
-- TCP — emulátor p65emu (výchozí `127.0.0.1:6551`)
+**Bootloader protocol:**
 
-**Protokol bootloaderu:**
-
-| Příkaz     | Akce                                                |
-| ------------ | --------------------------------------------------- |
-| `w`        | Raw binary upload (přesně 8192 B → $6000–$7FFF) |
-| `h`        | Intel HEX upload (libovolná adresa)                |
-| `s`        | Skok na $6000 (spuštění programu)                |
-| `m`        | EWOZ / WozMon monitor                               |
-| `^R` ($12) | Soft restart bootloaderu                            |
+| Command | Action |
+| ------- | ------ |
+| `w` | Raw binary upload — exactly 8192 bytes → `$6000–$7FFF` |
+| `h` | Intel HEX upload (any address) |
+| `s` | Jump to `$6000` (run program) |
+| `m` | Enter EWOZ / WozMon monitor |
+| `^R` (`$12`) | Soft-restart bootloader |
 
 ---
 
-## Firmware — poznámky k ewoz.asm
+## Typical Workflow
 
-- ACIA init: `$09` (RX IRQ zakázán) — `$0B` by způsobil IRQ storm při EWOZ pollingu.
-- `NEXTCHAR` volá `_kb_input` (ne `_acia_getc`) — klávesnice přes VIA1/ATtiny26.
-- `ECHO` volá `gr_put_byte` — hook pro grafický výstup (TMS9918A / GameDuino).
+```sh
+# 1. Build firmware
+cd Firmware && build_appartus.bat
+
+# 2. Start emulator
+cargo run --manifest-path emulator/Cargo.toml -- Firmware/output/APPARTUS_OS.bin
+
+# 3. In emulator terminal — send a program via Intel HEX
+> LOAD
+  (paste or send .hex file via uploader.py over TCP)
+
+# 4. Save and run
+> SAVE HELLO 6090 0100
+> DIR
+> RUN HELLO
+```
 
 ---
 
-## Soubory schématu
+## Known Issues
 
-```
-Eagle/SBC_65C02_IRQ_BigBoard_v9-1-3.sch/.brd  — starší verze
-Eagle/SBC_65C02_IRQ_BigBoard_v10-2-1.csv      — BOM verze 10
-Eagle/9-1-3 netlist                            — netlist verze 9 (txt)
-Eagle/EXP_GameDuino_V1.sch/.brd
-Eagle/EXP_TMS9918A_V1.sch/.brd
-```
+| # | Status | Description |
+| - | ------ | ----------- |
+| 1 | **Open** | `_nmi_init` configures VIA2 (`$CC80`) instead of VIA1 (`$CC00`) — NMI timer never fires |
+| 2 | Fixed | NMI ISR reloaded wrong VIA T1 counter |
+| 3 | **Open** | PS/2 keyboard driver reads from VIA2 (IC16) instead of VIA1 (IC18, ATtiny26) — keyboard non-functional |
+| 4 | **Pending** | `VDP_MODE0 = $7F10` falls within IC6 RAM range — bus conflict with TMS9918A card |
 
-Netlist pro v10-2-1 byl exportován 13.04.2026 z Eagle 9.6.2.
+> Bug #3 should not be fixed until bugs #1 and #2 are resolved. Bug #4 requires physical hardware verification.
+
+---
+
+## Hardware Files
+
+| File | Description |
+| ---- | ----------- |
+| `Eagle/SBC_65C02_IRQ_BigBoard_v10-2-1.csv` | Current BOM / netlist |
+| `Eagle/SBC_65C02_IRQ_BigBoard_v9-1-3.sch` | Main schematic (Eagle) |
+| `Eagle/SBC_65C02_IRQ_BigBoard_v9-1-3.brd` | Main PCB layout (Eagle) |
+| `Eagle/EXP_TMS9918A_V1.sch/.brd` | TMS9918A ISA video card |
+| `Eagle/EXP_GameDuino_V1.sch/.brd` | GameDuino ISA graphics card |
+
+Full hardware documentation (address decoding logic, IC cross-reference, IRQ system) is in [`CLAUDE.md`](CLAUDE.md).
+
+---
+
+## License
+
+See [`Firmware/LICENSE`](Firmware/LICENSE).
