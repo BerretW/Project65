@@ -503,8 +503,10 @@ _cmd_hexd:
 @hexd_gather:
     CPY #16
     BEQ @hexd_print
+    PHY                         ; _fgetc modifies Y — preserve byte counter
     LDX fd_tmp
     JSR _fgetc
+    PLY                         ; restore byte counter
     BCS @hexd_print             ; EOF
     CMP #$1B
     BNE @hexd_store
