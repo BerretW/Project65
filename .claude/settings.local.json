@@ -108,7 +108,8 @@
       "Bash(ca65 --cpu 65c02 os/appartus_basic.asm -o ../output/appartus_basic.o)",
       "Bash(cmd.exe /c \"cd /d c:\\\\Users\\\\adolf\\\\GIT\\\\Project65\\\\Firmware && build_appartus.bat\")",
       "Bash(ca65 --cpu 65c02 main_appartus.c -o /dev/null)",
-      "Bash(echo \"cc65 done: $?\")"
+      "Bash(echo \"cc65 done: $?\")",
+      "Bash(grep -n \"zeropage\\\\|\\\\.res\\\\|= \\\\$\\\\|\\\\.org\\\\|importzp\\\\|exportzp\" \"c:/Users/adolf/GIT/Project65/Firmware/src/ihex.asm\")"
     ]
   }
 }
