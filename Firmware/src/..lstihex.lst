@@ -1,0 +1,256 @@
+ca65 V2.19 - Git a545b4f
+Main file   : ihex.asm
+Current file: ihex.asm
+
+000000r 1               ; ihex.asm – Intel HEX loader pro P65 minimal bootloader
+000000r 1               ;
+000000r 1               ; Formát záznamu:
+000000r 1               ;   :LLAAAATTDD...DDCC<CR><LF>
+000000r 1               ;   LL   = počet datových bajtů (1 bajt)
+000000r 1               ;   AAAA = cílová adresa big-endian (2 bajty)
+000000r 1               ;   TT   = typ: 00=data, 01=EOF, ostatní přeskočeny
+000000r 1               ;   DD…  = datové bajty (LL kusů)
+000000r 1               ;   CC   = checksum (dvoujedn. doplněk součtu LL+AAAH+AAAL+TT+DD…)
+000000r 1               ;
+000000r 1               ; Čte bajt po bajtu ze sériového portu (ACIA, blokující).
+000000r 1               ; Přijímá jakoukoli příchozí BOM / CR / LF / mezery – čeká na ':'.
+000000r 1               ; ESC ($1B) přeruší nahrávání a vrátí $FF.
+000000r 1               ;
+000000r 1               ; Výstup: A = 0  → OK (všechny záznamy OK)
+000000r 1               ;         A = 1..254 → počet záznamů s chybou checksumu
+000000r 1               ;         A = $FF    → přerušeno klávesou ESC
+000000r 1               ;
+000000r 1               ; Průběhový výpis na ACIA:
+000000r 1               ;   '.' za každý OK záznam
+000000r 1               ;   'X' za každý záznam s chybou checksumu
+000000r 1               ;   CR+LF před návratem
+000000r 1               ;
+000000r 1               ; ZP adresy (hardcoded, mimo cc65 $00–$20, EWOZ $24–$30, ramtest $70–$74):
+000000r 1               ;   ihex_errs  = $38   počet chyb checksumu (saturuje na $FF)
+000000r 1               ;   ihex_cksum = $39   průběžný součet bajtů aktuálního záznamu
+000000r 1               ;   ihex_cnt   = $3A   počet datových bajtů v záznamu (LL)
+000000r 1               ;   ihex_type  = $3B   typ záznamu (TT)
+000000r 1               ;   ihex_addrH = $3C   cílová adresa – high byte
+000000r 1               ;   ihex_addrL = $3D   cílová adresa – low byte
+000000r 1               ;   ihex_tmp   = $3E   dočasné uložení prvního nibblu
+000000r 1               ;
+000000r 1               ; Sledování rozsahu nahraných adres (pro LSAVE v AppartusOS):
+000000r 1               ihex_minL  = $54   ; nejnižší zapsaná adresa lo  (sentinel $FF při init)
+000000r 1               ihex_minH  = $55   ; nejnižší zapsaná adresa hi
+000000r 1               ihex_maxL  = $56   ; adresa za posledním zapsaným bajtem lo (sentinel $00 při init)
+000000r 1               ihex_maxH  = $57   ; adresa za posledním zapsaným bajtem hi
+000000r 1               ;
+000000r 1               ; ptr1 ($0F/$10, cc65 ZP) se použije jako write pointer.
+000000r 1               
+000000r 1               .setcpu     "65C02"
+000000r 1               .smart      on
+000000r 1               .autoimport on
+000000r 1               .case       on
+000000r 1               .debuginfo  off
+000000r 1               
+000000r 1               .importzp   ptr1
+000000r 1               
+000000r 1               ; ---- ZP adresy jako equates (bez .zeropage/.res – nekolidují s linkerem) ----
+000000r 1               ihex_errs  = $38
+000000r 1               ihex_cksum = $39
+000000r 1               ihex_cnt   = $3A
+000000r 1               ihex_type  = $3B
+000000r 1               ihex_addrH = $3C
+000000r 1               ihex_addrL = $3D
+000000r 1               ihex_tmp   = $3E
+000000r 1               
+000000r 1               .export _ihex_load
+000000r 1               
+000000r 1               .segment "CODE"
+000000r 1               
+000000r 1               ; ============================================================
+000000r 1               ; _ihex_load – načte Intel HEX ze sériového portu
+000000r 1               ; ============================================================
+000000r 1               _ihex_load:
+000000r 1  64 38                stz ihex_errs           ; nuluj počítač chyb
+000002r 1  A9 FF                lda #$FF
+000004r 1  85 54                sta ihex_minL
+000006r 1  85 55                sta ihex_minH           ; min = $FFFF (sentinel – bude aktualizováno dolů)
+000008r 1  A9 00                lda #$00
+00000Ar 1  85 56                sta ihex_maxL
+00000Cr 1  85 57                sta ihex_maxH           ; max = $0000 (sentinel – bude aktualizováno nahoru)
+00000Er 1               
+00000Er 1               ; ---- čekáme na ':' (začátek záznamu) nebo ESC ----
+00000Er 1               @find_colon:
+00000Er 1  20 rr rr             jsr _acia_getc
+000011r 1  C9 1B                cmp #$1B                ; ESC = přerušení
+000013r 1  D0 03                bne @not_esc
+000015r 1  4C rr rr             jmp @done_esc
+000018r 1               @not_esc:
+000018r 1  C9 3A                cmp #':'
+00001Ar 1  D0 F2                bne @find_colon         ; ignoruj CR, LF, mezery, …
+00001Cr 1               
+00001Cr 1               ; ---- nalezeno ':' – zpracování záznamu ----
+00001Cr 1  64 39                stz ihex_cksum          ; nuluj průběžný součet
+00001Er 1               
+00001Er 1                       ; LL – počet datových bajtů
+00001Er 1  20 rr rr             jsr @rd_byte
+000021r 1  85 3A                sta ihex_cnt
+000023r 1               
+000023r 1                       ; AAAA – adresa (big-endian: nejprve high)
+000023r 1  20 rr rr             jsr @rd_byte
+000026r 1  85 3C                sta ihex_addrH
+000028r 1               
+000028r 1  20 rr rr             jsr @rd_byte
+00002Br 1  85 3D                sta ihex_addrL
+00002Dr 1               
+00002Dr 1                       ; TT – typ záznamu
+00002Dr 1  20 rr rr             jsr @rd_byte
+000030r 1  85 3B                sta ihex_type
+000032r 1               
+000032r 1  C9 01                cmp #$01                ; EOF?
+000034r 1  F0 75                beq @eof_record
+000036r 1  C9 00                cmp #$00                ; Data?
+000038r 1  D0 4A                bne @skip_record        ; jiný typ → přeskočit datové bajty
+00003Ar 1               
+00003Ar 1               ; ---- záznam typu 00 (data) – zápis do RAM ----
+00003Ar 1  A5 3D                lda ihex_addrL
+00003Cr 1  85 rr                sta ptr1
+00003Er 1  A5 3C                lda ihex_addrH
+000040r 1  85 rr                sta ptr1+1
+000042r 1               
+000042r 1  A6 3A                ldx ihex_cnt
+000044r 1  F0 48                beq @verify             ; LL=0 → jen verifikace checksumu
+000046r 1               
+000046r 1                       ; --- sledování min adresy (ihex_cnt != 0) ---
+000046r 1  A5 3C                lda ihex_addrH
+000048r 1  C5 55                cmp ihex_minH
+00004Ar 1  90 08                bcc @upd_min
+00004Cr 1  D0 0E                bne @skip_min
+00004Er 1  A5 3D                lda ihex_addrL
+000050r 1  C5 54                cmp ihex_minL
+000052r 1  B0 08                bcs @skip_min
+000054r 1               @upd_min:
+000054r 1  A5 3D                lda ihex_addrL
+000056r 1  85 54                sta ihex_minL
+000058r 1  A5 3C                lda ihex_addrH
+00005Ar 1  85 55                sta ihex_minH
+00005Cr 1               @skip_min:
+00005Cr 1               
+00005Cr 1               @data_loop:
+00005Cr 1  20 rr rr             jsr @rd_byte
+00005Fr 1  92 rr                sta (ptr1)
+000061r 1  E6 rr                inc ptr1
+000063r 1  D0 02                bne @data_cnt
+000065r 1  E6 rr                inc ptr1+1
+000067r 1               @data_cnt:
+000067r 1  CA                   dex
+000068r 1  D0 F2                bne @data_loop
+00006Ar 1               
+00006Ar 1                       ; --- sledování max adresy (ptr1 = addr+count = výhradní konec) ---
+00006Ar 1  A5 rr                lda ptr1+1
+00006Cr 1  C5 57                cmp ihex_maxH
+00006Er 1  90 12                bcc @skip_max
+000070r 1  D0 08                bne @upd_max
+000072r 1  A5 rr                lda ptr1
+000074r 1  C5 56                cmp ihex_maxL
+000076r 1  90 0A                bcc @skip_max
+000078r 1  F0 08                beq @skip_max           ; ptr1 == max → žádná změna
+00007Ar 1               @upd_max:
+00007Ar 1  A5 rr                lda ptr1
+00007Cr 1  85 56                sta ihex_maxL
+00007Er 1  A5 rr                lda ptr1+1
+000080r 1  85 57                sta ihex_maxH
+000082r 1               @skip_max:
+000082r 1  80 0A                bra @verify             ; → verifikace checksumu
+000084r 1               
+000084r 1               ; ---- záznam jiného typu (02, 03, 04, 05…) – přečíst a zahodit ----
+000084r 1               @skip_record:
+000084r 1  A6 3A                ldx ihex_cnt
+000086r 1  F0 06                beq @verify
+000088r 1               @skip_loop:
+000088r 1  20 rr rr             jsr @rd_byte            ; čteme a zahazujeme (stále přičítáme do checksumu)
+00008Br 1  CA                   dex
+00008Cr 1  D0 FA                bne @skip_loop
+00008Er 1                       ; fall-through → @verify
+00008Er 1               
+00008Er 1               ; ---- verifikace checksumu záznamu ----
+00008Er 1               @verify:
+00008Er 1  20 rr rr             jsr @rd_byte            ; CC – checksum bajt (přičte se k ihex_cksum)
+000091r 1  A5 39                lda ihex_cksum          ; výsledný součet musí být 0
+000093r 1  D0 08                bne @cksum_err
+000095r 1  A9 2E                lda #'.'
+000097r 1  20 rr rr             jsr _acia_putc          ; záznam OK
+00009Ar 1  4C rr rr             jmp @find_colon         ; další záznam
+00009Dr 1               
+00009Dr 1               @cksum_err:
+00009Dr 1  A9 58                lda #'X'
+00009Fr 1  20 rr rr             jsr _acia_putc          ; chyba checksumu
+0000A2r 1  E6 38                inc ihex_errs           ; počítej chybu
+0000A4r 1  D0 02                bne @cksum_next         ; ne $FF → pokračuj
+0000A6r 1  C6 38                dec ihex_errs           ; saturace: zpět na $FE+1=$FF … undo wrap
+0000A8r 1               @cksum_next:
+0000A8r 1  4C rr rr             jmp @find_colon
+0000ABr 1               
+0000ABr 1               ; ---- záznam typu 01 (EOF) ----
+0000ABr 1               @eof_record:
+0000ABr 1                       ; EOF záznam má LL=00; přečteme checksum bajt a ověříme
+0000ABr 1  20 rr rr             jsr @rd_byte            ; CC
+0000AEr 1  A5 39                lda ihex_cksum
+0000B0r 1  F0 06                beq @eof_ok
+0000B2r 1  E6 38                inc ihex_errs           ; chyba v EOF záznamu
+0000B4r 1  D0 02                bne @eof_ok
+0000B6r 1  C6 38                dec ihex_errs           ; saturace
+0000B8r 1               @eof_ok:
+0000B8r 1  A9 0D                lda #$0D                ; CR+LF před návratem
+0000BAr 1  20 rr rr             jsr _acia_putc
+0000BDr 1  A9 0A                lda #$0A
+0000BFr 1  20 rr rr             jsr _acia_putc
+0000C2r 1  A5 38                lda ihex_errs           ; A=0 OK, A!=0 chyby
+0000C4r 1  60                   rts
+0000C5r 1               
+0000C5r 1               @done_esc:
+0000C5r 1  A9 FF                lda #$FF                ; ESC – přerušení
+0000C7r 1  60                   rts
+0000C8r 1               
+0000C8r 1               
+0000C8r 1               ; ============================================================
+0000C8r 1               ; @rd_byte – přečte 2 ASCII hex znaky z ACIA → bajt v A
+0000C8r 1               ; Přičítá výsledek do ihex_cksum (průběžný checksum).
+0000C8r 1               ; Ničí: A, ihex_tmp
+0000C8r 1               ; ============================================================
+0000C8r 1               @rd_byte:
+0000C8r 1  20 rr rr             jsr _acia_getc
+0000CBr 1  20 rr rr             jsr @hex_nib            ; A = hodnota prvního nibblu (0–15)
+0000CEr 1  0A                   asl
+0000CFr 1  0A                   asl
+0000D0r 1  0A                   asl
+0000D1r 1  0A                   asl
+0000D2r 1  85 3E                sta ihex_tmp            ; uložíme high nibble × 16
+0000D4r 1  20 rr rr             jsr _acia_getc
+0000D7r 1  20 rr rr             jsr @hex_nib            ; A = hodnota druhého nibblu (0–15)
+0000DAr 1  29 0F                and #$0F
+0000DCr 1  05 3E                ora ihex_tmp            ; A = plný bajt
+0000DEr 1  48                   pha                     ; uložíme bajt na zásobník
+0000DFr 1  18                   clc
+0000E0r 1  65 39                adc ihex_cksum          ; přičteme k průběžnému checksumu
+0000E2r 1  85 39                sta ihex_cksum
+0000E4r 1  68                   pla                     ; vrátíme bajt
+0000E5r 1  60                   rts
+0000E6r 1               
+0000E6r 1               
+0000E6r 1               ; ============================================================
+0000E6r 1               ; @hex_nib – převede ASCII hex znak v A na hodnotu 0–15
+0000E6r 1               ; Vstup:  A = '0'–'9' nebo 'A'–'F' nebo 'a'–'f'
+0000E6r 1               ; Výstup: A = 0–15
+0000E6r 1               ; ============================================================
+0000E6r 1               @hex_nib:
+0000E6r 1  C9 61                cmp #'a'                ; lowercase?
+0000E8r 1  90 02                bcc @upper_or_digit
+0000EAr 1  29 DF                and #$DF                ; lowercase → uppercase (clear bit 5)
+0000ECr 1               @upper_or_digit:
+0000ECr 1  C9 41                cmp #'A'
+0000EEr 1  90 04                bcc @digit              ; < 'A' → '0'–'9'
+0000F0r 1  38                   sec
+0000F1r 1  E9 37                sbc #'A' - 10           ; 'A'→10, 'B'→11, …, 'F'→15
+0000F3r 1  60                   rts
+0000F4r 1               @digit:
+0000F4r 1  38                   sec
+0000F5r 1  E9 30                sbc #'0'                ; '0'→0, …, '9'→9
+0000F7r 1  60                   rts
+0000F7r 1               

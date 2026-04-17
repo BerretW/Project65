@@ -360,9 +360,10 @@ impl App {
         // takže dostáváme standardní 7-bit ASCII.
         // Odřádkování: EWOZ posílá pouze CR (0x0D) — LF (0x0A) se nepoužívá.
         // Backspace: EWOZ posílá sekvenci BS(0x08) + SPACE(0x20) + BS(0x08).
-        //   → jednoduché řešení: BS = pop, přeskočit mezeru POUZE pokud předcházel BS.
+        //   BS·SPC přeskočíme, druhý BS ignorujeme (kurzor je již na správném místě).
 
         let mut prev_was_bs = false;
+        let mut ewoz_bs_seq = false; // viděli jsme BS·SPC, čekáme na druhý BS k ignorování
 
         for raw in bytes {
             let b = raw & 0x7F; // strip bit 7 pro jistotu
@@ -375,6 +376,7 @@ impl App {
                     // auto-scroll na konec pokud uživatel nestroloval nahoru
                     if self.term_scroll == 0 { /* already at bottom */ }
                     prev_was_bs = false;
+                    ewoz_bs_seq = false;
                 }
                 0x0A => {
                     // LF → odřádkování (jen pokud nepředcházel CR, aby se předešlo dvojitému \r\n)
@@ -384,25 +386,33 @@ impl App {
                         self.term_lines.push_back(line);
                     }
                     prev_was_bs = false;
+                    ewoz_bs_seq = false;
                 }
                 0x08 | 0x7F => {
-                    // BS nebo DEL → smaž poslední znak aktuálního řádku
-                    self.term_cur.pop();
+                    if ewoz_bs_seq {
+                        // Druhý BS v EWOZ sekvenci BS·SPC·BS — kurzor je již zpět, přeskočit
+                        ewoz_bs_seq = false;
+                    } else {
+                        // Samostatný BS nebo DEL → smaž poslední znak
+                        self.term_cur.pop();
+                    }
                     prev_was_bs = true;
                 }
                 0x20 if prev_was_bs => {
                     // SPACE bezprostředně po BS = část EWOZ BS-sekvence (BS·SPC·BS)
-                    // → přeskočíme, nebudeme psát mezeru
-                    // prev_was_bs necháme true, druhý BS v sekvenci pak smaže znovu
-                    // (ale term_cur je již prázdnější o 1, takže druhý BS nic neudělá)
+                    // → přeskočíme mezeru a nastavíme flag pro ignorování druhého BS
+                    ewoz_bs_seq = true;
+                    prev_was_bs = false;
                 }
                 c if c < 0x20 => {
                     // ostatní řídicí znaky ignoruj (BEL, TAB bez rozšíření atd.)
                     prev_was_bs = false;
+                    ewoz_bs_seq = false;
                 }
                 c => {
                     self.term_cur.push(c as char);
                     prev_was_bs = false;
+                    ewoz_bs_seq = false;
                 }
             }
         }
@@ -1788,14 +1798,14 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) -> bool {
         (_, KeyCode::F(9)) => app.set_speed(u64::MAX),
 
         // Speed ×2 / ÷2
-        (_, KeyCode::Char('+')) | (_, KeyCode::Char('=')) => {
-            let new = app.speed_hz.saturating_mul(2);
-            app.set_speed(new);
-        }
-        (_, KeyCode::Char('-')) => {
-            let new = (app.speed_hz / 2).max(100);
-            app.set_speed(new);
-        }
+        // (_, KeyCode::Char('+')) | (_, KeyCode::Char('=')) => {
+        //     let new = app.speed_hz.saturating_mul(2);
+        //     app.set_speed(new);
+        // }
+        // (_, KeyCode::Char('-')) => {
+        //     let new = (app.speed_hz / 2).max(100);
+        //     app.set_speed(new);
+        // }
 
         // Open ROM → file browser modal
         (KeyModifiers::CONTROL, KeyCode::Char('o')) => {

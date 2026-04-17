@@ -30,6 +30,12 @@
 ;   ihex_addrL = $3D   cílová adresa – low byte
 ;   ihex_tmp   = $3E   dočasné uložení prvního nibblu
 ;
+; Sledování rozsahu nahraných adres (pro LSAVE v AppartusOS):
+ihex_minL  = $54   ; nejnižší zapsaná adresa lo  (sentinel $FF při init)
+ihex_minH  = $55   ; nejnižší zapsaná adresa hi
+ihex_maxL  = $56   ; adresa za posledním zapsaným bajtem lo (sentinel $00 při init)
+ihex_maxH  = $57   ; adresa za posledním zapsaným bajtem hi
+;
 ; ptr1 ($0F/$10, cc65 ZP) se použije jako write pointer.
 
 .setcpu     "65C02"
@@ -58,12 +64,20 @@ ihex_tmp   = $3E
 ; ============================================================
 _ihex_load:
         stz ihex_errs           ; nuluj počítač chyb
+        lda #$FF
+        sta ihex_minL
+        sta ihex_minH           ; min = $FFFF (sentinel – bude aktualizováno dolů)
+        lda #$00
+        sta ihex_maxL
+        sta ihex_maxH           ; max = $0000 (sentinel – bude aktualizováno nahoru)
 
 ; ---- čekáme na ':' (začátek záznamu) nebo ESC ----
 @find_colon:
         jsr _acia_getc
         cmp #$1B                ; ESC = přerušení
-        beq @done_esc
+        bne @not_esc
+        jmp @done_esc
+@not_esc:
         cmp #':'
         bne @find_colon         ; ignoruj CR, LF, mezery, …
 
@@ -99,6 +113,16 @@ _ihex_load:
         ldx ihex_cnt
         beq @verify             ; LL=0 → jen verifikace checksumu
 
+        ; --- min: zapiš jen pro první záznam (sentinel = $FFFF) ---
+        lda ihex_minH
+        cmp #$FF
+        bne @skip_min
+        lda ihex_addrL
+        sta ihex_minL
+        lda ihex_addrH
+        sta ihex_minH
+@skip_min:
+
 @data_loop:
         jsr @rd_byte
         sta (ptr1)
@@ -108,6 +132,12 @@ _ihex_load:
 @data_cnt:
         dex
         bne @data_loop
+
+        ; --- max: vždy aktualizuj na ptr1 (konec tohoto záznamu) ---
+        lda ptr1
+        sta ihex_maxL
+        lda ptr1+1
+        sta ihex_maxH
         bra @verify             ; → verifikace checksumu
 
 ; ---- záznam jiného typu (02, 03, 04, 05…) – přečíst a zahodit ----
@@ -133,9 +163,10 @@ _ihex_load:
         lda #'X'
         jsr _acia_putc          ; chyba checksumu
         inc ihex_errs           ; počítej chybu
-        bne @find_colon         ; saturace na $FF
-        dec ihex_errs
-        bra @find_colon
+        bne @cksum_next         ; ne $FF → pokračuj
+        dec ihex_errs           ; saturace: zpět na $FE+1=$FF … undo wrap
+@cksum_next:
+        jmp @find_colon
 
 ; ---- záznam typu 01 (EOF) ----
 @eof_record:

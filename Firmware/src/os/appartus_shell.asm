@@ -34,6 +34,12 @@
 
 .include "../io.inc65"
 
+; Rozsah adres nahraných _ihex_load (sledování pro LSAVE)
+ihex_minL  = $54
+ihex_minH  = $55
+ihex_maxL  = $56
+ihex_maxH  = $57
+
 .importzp   os_arg0, os_arg1, os_ptr
 .importzp   rd_ptr, rd_idx, rd_tmp
 .importzp   parse_idx, rd_src, rd_dst, rd_size_lo, rd_size_hi
@@ -55,8 +61,6 @@
 cmd_buf:    .res 64         ; raw input line
 cmd_token:  .res 9          ; current parsed token (8 chars + NUL)
 os_name:    .res 9          ; filename parsed from command line
-hexbuf:     .res 16         ; HEXD: byte buffer for one output line
-hexd_cnt:   .res 1          ; HEXD: valid byte count in hexbuf
 
 .export cmd_token           ; needed by appartus_fileio TYPE/HEXD (autoimport)
 
@@ -217,12 +221,12 @@ _shell_loop:
     JMP _cmd_type
 @no_type:
 
-    ; HEXD
+    ; LSAVE
     JSR _str_cmp_P
-    .byte "HEXD",0
-    BNE @no_hexd
-    JMP _cmd_hexd
-@no_hexd:
+    .byte "LSAVE",0
+    BNE @no_lsave
+    JMP _cmd_lsave
+@no_lsave:
 
     ; Unknown command
     LDA #<str_unknown
@@ -471,142 +475,60 @@ _cmd_type:
     JMP _shell_loop
 
 ; ---------------------------------------------------------------------------
-; _cmd_hexd — HEXD <name>
+; _cmd_lsave — LSAVE <name>
 ;
-; Hex dump of a file or device, 16 bytes per line:
-;   OOOO: HH HH HH ... HH  cccccccc
-; ESC aborts.  Offset printed in hex.
-; Uses os_arg0/os_arg1 as the running byte offset (safe here: _rd_save
-; and _parse_hex4 are not called during a hex dump).
+; Přijme Intel HEX přes ACIA a uloží přijatá data rovnou do RAMDisku.
+; Rozsah adres (zdroj + load adresa + velikost) se odvodí automaticky
+; z min/max adres zapsaných loaderem (ihex_minH:L .. ihex_maxH:L).
+;
+; Syntax:  LSAVE <name>   (jméno max 8 znaků)
 ; ---------------------------------------------------------------------------
 
-_cmd_hexd:
+_cmd_lsave:
+    ; Parsuj jméno souboru
     JSR _tok_next
     LDA cmd_token
-    BNE @hexd_got_tok
-    JMP @bad_args_h
-@hexd_got_tok:
-    LDA #<cmd_token
-    LDX #>cmd_token
-    JSR _fopen
-    BCC @hexd_open_ok
-    JMP @notfound_h
-@hexd_open_ok:
-    TAX
-    STX fd_tmp
-    STZ os_arg0                 ; offset lo = 0
-    STZ os_arg1                 ; offset hi = 0
-
-@hexd_line:
-    ; Collect up to 16 bytes from fd into hexbuf
-    LDY #0
-@hexd_gather:
-    CPY #16
-    BEQ @hexd_print
-    PHY                         ; _fgetc modifies Y — preserve byte counter
-    LDX fd_tmp
-    JSR _fgetc
-    PLY                         ; restore byte counter
-    BCS @hexd_print             ; EOF
-    CMP #$1B
-    BNE @hexd_store
-    JMP @hexd_esc               ; ESC abort (JMP — no range limit)
-@hexd_store:
-    STA hexbuf,Y
-    INY
-    BRA @hexd_gather
-
-@hexd_print:
-    CPY #0
-    BNE @hexd_has_data
-    JMP @hexd_done              ; no bytes — clean exit
-@hexd_has_data:
-    STY hexd_cnt                ; remember actual byte count
-
-    ; Print 4-digit offset (os_arg1 hi, os_arg0 lo)
-    LDA os_arg1
-    JSR _print_byte
-    LDA os_arg0
-    JSR _print_byte
-    LDA #':'
-    JSR _acia_putc
-    LDA #' '
-    JSR _acia_putc
-
-    ; Print hex bytes
-    LDX #0
-@hexd_hex:
-    CPX hexd_cnt
-    BEQ @hexd_hexpad
-    LDA hexbuf,X
-    JSR _print_byte
-    LDA #' '
-    JSR _acia_putc
-    INX
-    BRA @hexd_hex
-@hexd_hexpad:
-    ; Pad with spaces for short lines (3 chars per missing byte)
-    CPX #16
-    BEQ @hexd_ascii
-    LDA #' '
-    JSR _acia_putc
-    JSR _acia_putc
-    JSR _acia_putc
-    INX
-    BRA @hexd_hexpad
-
-@hexd_ascii:
-    LDA #' '
-    JSR _acia_putc
-    ; Print ASCII representation
-    LDX #0
-@hexd_asc:
-    CPX hexd_cnt
-    BEQ @hexd_endl
-    LDA hexbuf,X
-    CMP #$20
-    BCC @hexd_dot
-    CMP #$7F
-    BCC @hexd_printable
-@hexd_dot:
-    LDA #'.'
-@hexd_printable:
-    JSR _acia_putc
-    INX
-    BRA @hexd_asc
-
-@hexd_endl:
-    JSR _acia_put_newline
-    ; Advance offset by count
-    LDA os_arg0
-    CLC
-    ADC hexd_cnt
+    BEQ @ls_done            ; žádné jméno → ignoruj
+    JSR _strcpy_to_osname
+    ; Načti HEX
+    JSR _ihex_load
+    CMP #$FF
+    BEQ @ls_done            ; ESC → tiše návrat
+    ; Zkontroluj, zda min < max (máme data)
+    LDA ihex_maxH
+    CMP ihex_minH
+    BCC @ls_done
+    BNE @ls_save
+    LDA ihex_maxL
+    CMP ihex_minL
+    BCC @ls_done
+    BEQ @ls_done
+@ls_save:
+    LDA ihex_minL
+    STA rd_src
     STA os_arg0
-    BCC @hexd_cont
-    INC os_arg1
-@hexd_cont:
-    ; If we got a full line, continue; partial line means EOF was hit
-    LDA hexd_cnt
-    CMP #16
-    BNE @hexd_done      ; partial line → EOF, done
-    JMP @hexd_line      ; full line → next line (JMP: no range limit)
-
-@hexd_esc:
-    JSR _acia_put_newline
-@hexd_done:
-    LDX fd_tmp
-    JSR _fclose
-    JMP _shell_loop
-
-@notfound_h:
-    LDA #<str_notfound
-    LDX #>str_notfound
+    LDA ihex_minH
+    STA rd_src+1
+    STA os_arg1
+    LDA ihex_maxL
+    SEC
+    SBC ihex_minL
+    STA rd_size_lo
+    LDA ihex_maxH
+    SBC ihex_minH
+    STA rd_size_hi
+    LDA #<os_name
+    LDX #>os_name
+    STA os_ptr
+    STX os_ptr+1
+    LDA #RDF_RUN
+    STA rd_tmp
+    JSR _rd_save
+    BCS @ls_done
+    LDA #<str_save_ok
+    LDX #>str_save_ok
     JSR _acia_print_nl
-    JMP _shell_loop
-@bad_args_h:
-    LDA #<str_bad_args
-    LDX #>str_bad_args
-    JSR _acia_print_nl
+@ls_done:
     JMP _shell_loop
 
 ; ---------------------------------------------------------------------------
@@ -913,9 +835,9 @@ str_version:
 str_rd_fmt:
     .byte "RAMDisk init...",0
 str_help:
-    .byte "HELP VER DIR FREE FORMAT LOAD",13,10
-    .byte "SAVE DEL RUN TYPE HEXD BASIC RESET",13,10
-    .byte "SAVE <n> <addr> <sz>",13,10,0
+    .byte "HELP VER DIR FREE FORMAT LOAD LSAVE",13,10
+    .byte "SAVE DEL RUN TYPE BASIC RESET",13,10
+    .byte "SAVE <n> <a> <sz>  LSAVE <n>",13,10,0
 str_fmt_confirm:
     .byte "Format? ALL LOST. (Y/N): ",0
 str_fmt_done:

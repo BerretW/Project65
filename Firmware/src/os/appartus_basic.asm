@@ -589,7 +589,7 @@ _bas_exec_stmt:
 ; ===========================================================
 
 ; --- PRINT ---
-; PRINT ["str"|expr] [;|,] ...
+; PRINT["str"|expr] [;|,] ...
 _bas_stmt_print:
     JSR _bas_skip_spaces
     LDA (bas_ip)
@@ -924,7 +924,7 @@ _bas_stmt_next:
     BEQ @nx_err
     ; Top-of-stack offset = (fsp-1)*7
     LDA bas_fsp
-    DEC
+    DEA                 ; OPRAVA 4: DEC -> DEA (pro 65C02)
     STA bas_tmp         ; temp = fsp-1
     ASL
     ASL
@@ -953,27 +953,34 @@ _bas_stmt_next:
     ; Store new value
     LDA bas_tmp
     JSR _bas_set_var
-    ; Compare: if step >= 0: done when var > to; if step < 0: done when var < to
+
+    ; OPRAVA 3: Znaménkové porovnání mezí
     LDA bas_for_stk+4,X
-    BPL @nx_pos_step
-    ; Negative step: done if bas_acc < to (unsigned hi cmp first)
-    LDA bas_acc+1
-    CMP bas_for_stk+2,X
-    BCC @nx_done
-    BNE @nx_cont
-    LDA bas_acc
-    CMP bas_for_stk+1,X
-    BCC @nx_done
-    BRA @nx_cont
+    BMI @nx_neg_step
+
 @nx_pos_step:
-    ; Positive step: done if bas_acc > to
-    LDA bas_for_stk+2,X
-    CMP bas_acc+1
-    BCC @nx_done
-    BNE @nx_cont
+    ; Positive step: done if bas_acc > to (které znamená 'to < bas_acc')
     LDA bas_for_stk+1,X
     CMP bas_acc
-    BCC @nx_done
+    LDA bas_for_stk+2,X
+    SBC bas_acc+1
+    BVC @nx_ps_nv
+    EOR #$80
+@nx_ps_nv:
+    BMI @nx_done
+    BRA @nx_cont
+
+@nx_neg_step:
+    ; Negative step: done if bas_acc < to
+    LDA bas_acc
+    CMP bas_for_stk+1,X
+    LDA bas_acc+1
+    SBC bas_for_stk+2,X
+    BVC @nx_ns_nv
+    EOR #$80
+@nx_ns_nv:
+    BMI @nx_done
+
 @nx_cont:
     ; Continue: jump to body
     LDA bas_for_stk+5,X
@@ -1050,7 +1057,7 @@ _bas_stmt_wend:
     LDA bas_wsp
     BEQ @wend_err
     LDA bas_wsp
-    DEC
+    DEA                 ; OPRAVA 4: DEC -> DEA (pro 65C02)
     ASL
     ASL
     TAX   ; offset = (wsp-1)*4
@@ -1163,6 +1170,13 @@ _bas_stmt_gosub:
     LDA bas_gsp
     CMP #BAS_MAX_GSB
     BCS @gsb_ov
+    ; OPRAVA 1: Zpracujeme cílové číslo řádku jako první
+    JSR _bas_skip_spaces
+    JSR _bas_parse_num
+    LDA bas_acc
+    STA bas_tmp
+    LDA bas_acc+1
+    STA bas_tmp+1
     ; Compute and save return address
     LDA bas_lp
     PHA
@@ -1181,13 +1195,7 @@ _bas_stmt_gosub:
     PLA
     STA bas_lp   ; restore for parse_num (doesn't need bas_lp)
     INC bas_gsp
-    ; Parse target and jump
-    JSR _bas_skip_spaces
-    JSR _bas_parse_num
-    LDA bas_acc
-    STA bas_tmp
-    LDA bas_acc+1
-    STA bas_tmp+1
+    ; Provedeme skok
     JSR _bas_find_line
     BCC @gsb_ok
     LDA #<str_undef
@@ -1817,19 +1825,49 @@ _bas_mul16:
 
 ; ============================================================
 ; _bas_div16 — bas_acc / bas_tmp → quotient in bas_acc
-; Uses bas_rhs as remainder. Unsigned. Handles div-by-zero.
+; OPRAVA 2: Dělení nyní podporuje znaménka (Signed Division)
 ; ============================================================
 _bas_div16:
     LDA bas_tmp
     ORA bas_tmp+1
-    BNE @dv_ok
+    BNE @dv_chk_sign
     LDA #<str_divz
     LDX #>str_divz
     JSR _acia_print_nl
     STZ bas_acc
     STZ bas_acc+1
     RTS
-@dv_ok:
+@dv_chk_sign:
+    ; Výsledné znaménko schováme na zásobník (XOR obou hodnot)
+    LDA bas_acc+1
+    EOR bas_tmp+1
+    PHA
+
+    ; Absolutní hodnota (bas_acc)
+    LDA bas_acc+1
+    BPL @dv_acc_pos
+    LDA #0
+    SEC
+    SBC bas_acc
+    STA bas_acc
+    LDA #0
+    SBC bas_acc+1
+    STA bas_acc+1
+@dv_acc_pos:
+
+    ; Absolutní hodnota (bas_tmp)
+    LDA bas_tmp+1
+    BPL @dv_tmp_pos
+    LDA #0
+    SEC
+    SBC bas_tmp
+    STA bas_tmp
+    LDA #0
+    SBC bas_tmp+1
+    STA bas_tmp+1
+@dv_tmp_pos:
+
+    ; Vlastní Unsigned dělení
     LDA #0
     STA bas_rhs
     STA bas_rhs+1
@@ -1854,9 +1892,22 @@ _bas_div16:
     INC bas_acc
     BNE @dv_no
     INC bas_acc+1
-@dv_no: DEX
-BNE @dv
-RTS
+@dv_no:
+    DEX
+    BNE @dv
+
+    ; Obnova znaménka výsledku ze zásobníku
+    PLA
+    BPL @dv_done
+    LDA #0
+    SEC
+    SBC bas_acc
+    STA bas_acc
+    LDA #0
+    SBC bas_acc+1
+    STA bas_acc+1
+@dv_done:
+    RTS
 
 ; ============================================================
 ; Program management helpers
