@@ -1653,11 +1653,14 @@ _bas_primary:
     JMP _bas_parse_num
 
 ; ============================================================
-; _bas_parse_num — parse decimal integer at bas_ip → bas_acc
+; _bas_parse_num — parse decimal (or $hex) integer at bas_ip → bas_acc
 ; ============================================================
 _bas_parse_num:
     STZ bas_acc
     STZ bas_acc+1
+    LDA (bas_ip)
+    CMP #'$'
+    BEQ _bas_parse_hex
 @pn:
     LDA (bas_ip)
     CMP #'0'
@@ -1697,6 +1700,53 @@ _bas_parse_num:
     INC bas_ip+1
     BRA @pn
 @pn_done: RTS
+
+; ============================================================
+; _bas_parse_hex — parse $XXXX hex literal at bas_ip → bas_acc
+; Called from _bas_parse_num when '$' detected; bas_acc already zero
+; ============================================================
+_bas_parse_hex:
+    INC bas_ip          ; skip '$'
+    BNE @ph_loop
+    INC bas_ip+1
+@ph_loop:
+    LDA (bas_ip)
+    CMP #'0'
+    BCC @ph_done
+    CMP #'9'+1
+    BCC @ph_digit
+    CMP #'A'
+    BCC @ph_done
+    CMP #'F'+1
+    BCS @ph_done
+    SEC
+    SBC #'A'-10         ; A-F → 10-15
+    BRA @ph_got
+@ph_digit:
+    SEC
+    SBC #'0'            ; 0-9 → 0-9
+@ph_got:
+    PHA
+    ASL bas_acc         ; acc <<= 4
+    ROL bas_acc+1
+    ASL bas_acc
+    ROL bas_acc+1
+    ASL bas_acc
+    ROL bas_acc+1
+    ASL bas_acc
+    ROL bas_acc+1
+    PLA
+    CLC
+    ADC bas_acc
+    STA bas_acc
+    BCC @ph_ni
+    INC bas_acc+1
+@ph_ni:
+    INC bas_ip
+    BNE @ph_loop
+    INC bas_ip+1
+    BRA @ph_loop
+@ph_done: RTS
 
 ; ============================================================
 ; Variable helpers
