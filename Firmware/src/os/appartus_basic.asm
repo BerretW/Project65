@@ -108,6 +108,7 @@ _bas_repl:
     LDA #>bas_ibuf
     STA bas_ip+1
     JSR _bas_exec_direct
+    jcs _bas_run_loop
     JMP _bas_repl
 
 ; ============================================================
@@ -1754,6 +1755,7 @@ _bas_print_uint:
 ; _bas_div10_tmp — bas_tmp / 10 → quotient in bas_tmp, remainder in A
 ; Uses bas_rhs as work area. Does NOT touch bas_acc.
 _bas_div10_tmp:
+    PHX
     STZ bas_rhs
     STZ bas_rhs+1
     LDX #16
@@ -1780,6 +1782,7 @@ _bas_div10_tmp:
 @dt_no: DEX
 BNE @dt
     LDA bas_rhs
+    PLX
     RTS   ; remainder
 
 ; ============================================================
@@ -1906,8 +1909,13 @@ _bas_store_line:
     STA bas_lnum
     LDA bas_acc+1
     STA bas_lnum+1
-    JSR _bas_skip_spaces                ; skip spaces after number
+    JSR _bas_skip_spaces                ; skip spaces after number → bas_ip = text start
 
+    ; _bas_find_line clobbers bas_ip (via _bas_next_line) — save it first
+    LDA bas_ip
+    PHA
+    LDA bas_ip+1
+    PHA
     ; Delete existing line with same number
     LDA bas_lnum
     STA bas_tmp
@@ -1917,11 +1925,15 @@ _bas_store_line:
     BCS @sl_no_del
     JSR _bas_del_at_lp                  ; removes line at bas_lp, updates bas_ep
 @sl_no_del:
+    PLA
+    STA bas_ip+1
+    PLA
+    STA bas_ip                          ; restore text pointer in bas_ibuf
     ; If no text remains, just delete (bare line number = delete)
     LDA bas_ip
     STA bas_rhs
     LDA bas_ip+1
-    STA bas_rhs+1   ; save text ptr
+    STA bas_rhs+1
     LDA (bas_ip)
     jeq @sl_done
 
@@ -2024,9 +2036,6 @@ _bas_store_line:
     ADC bas_tmp+1
     STA bas_acc+1
     ; Reverse copy: count bytes from src downward to dst
-    LDA bas_rhs
-    STA bas_rhs+1   ; reuse bas_rhs as byte-counter lo (hi=0 after)
-    ; Actually we need to count down bas_rhs words properly. Let me use Y and X differently.
     ; Simple loop: copy bas_rhs (16-bit) bytes from bas_tmp2 to bas_acc, decrement both, decrement count
 @sl_copy:
     LDA bas_rhs
@@ -2049,22 +2058,16 @@ _bas_store_line:
 @sl_dc: DEC bas_rhs
     BRA @sl_copy
 @sl_copy_done:
-    ; Write new line at bas_lp
-    ; Restore text ptr from bas_rhs (saved at @sl_no_del)
-    ; Wait — bas_rhs was overwritten! We need to save text ptr differently.
-    ; Fix: save bas_ip (the text pointer) to the hardware stack before this section.
-    ; This is a design issue. Let me use a different approach:
-    ; The text is still in bas_ibuf. bas_ip was saved in bas_rhs before we clobbered it.
-    ; Restore: the text pointer was stored in bas_rhs/bas_rhs+1 at @sl_no_del. But we
-    ; clobbered bas_rhs during the block move. We need to use the hardware stack.
-    ; For now: text starts right after the line number in bas_ibuf.
-    ; Re-point bas_ip to bas_ibuf text (= after the number + spaces)
+    ; Save line size — _bas_parse_num below clobbers bas_tmp
+    LDA bas_tmp
+    PHA
+    ; Re-point bas_ip to bas_ibuf text (after line number + spaces)
     LDA #<bas_ibuf
     STA bas_ip
     LDA #>bas_ibuf
     STA bas_ip+1
     JSR _bas_parse_num
-    JSR _bas_skip_spaces   ; advance bas_ip past number+spaces
+    JSR _bas_skip_spaces
     ; Write at bas_lp
     LDY #0
     LDA bas_lnum
@@ -2083,7 +2086,9 @@ _bas_store_line:
 @sl_wnxt: INY
 BRA @sl_wtext
 @sl_wdone:
-    ; Update bas_ep
+    ; Update bas_ep — restore line size saved before re-parse
+    PLA
+    STA bas_tmp
     LDA bas_ep
     CLC
     ADC bas_tmp
