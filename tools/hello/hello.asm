@@ -6,7 +6,7 @@
 ; Sestavení (ca65):
 ;   ca65 -t none hello.asm -o hello.o
 ;   ld65 -t none -S $3000 hello.o -o hello.bin
-;   python ihex_gen.py hello.bin 3000 > hello.hex
+;   python ../ihex_gen.py hello.bin 3000 hello.hex
 
 ; ROM jump table (z kernel_api.inc)
 ROM_PRINTNL = $FF18     ; print null-terminated string + CR+LF (A=lo, X=hi)
