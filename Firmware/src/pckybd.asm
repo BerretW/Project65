@@ -22,10 +22,10 @@ kb_tail:  .res 1                  ; index pro cteni (konzument = hlavni smycka)
 
 ;
 ; I/O Port definitions
-kb_data_or      =     VIA2_ORA
-kb_data_ddr     =     VIA2_DDRA
-kb_stat_or      =     VIA2_ORB            ; 6522 IO port register B
-kb_stat_ddr     =     VIA2_DDRB             ; 6522 IO data direction register B
+kb_data_or      =     VIA1_ORA
+kb_data_ddr     =     VIA1_DDRA
+kb_stat_or      =     VIA1_ORB            ; 6522 IO port register B
+kb_stat_ddr     =     VIA1_DDRB             ; 6522 IO data direction register B
 ;kb status
 kb_rdy          =     $FE
 kb_ack          =     $FF

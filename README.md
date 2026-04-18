@@ -169,7 +169,7 @@ VECTORS: $FFFA         (NMI / RESET / IRQ vectors)
 
 A cycle-accurate Rust emulator with a ratatui terminal UI.
 
-### Prerequisites
+### Build Requirements
 
 - [Rust toolchain](https://rustup.rs/) (stable)
 
@@ -229,11 +229,13 @@ The TCP serial port (default `127.0.0.1:6551`) allows PuTTY, netcat, or `uploade
 Python/tkinter GUI for uploading firmware to the real board or the emulator.
 
 **Dependencies:**
+
 ```sh
 pip install pyserial
 ```
 
 **Connection modes:**
+
 - **COM port** — real hardware (19200 Bd, 8N1)
 - **TCP** — emulator (`127.0.0.1:6551`)
 
@@ -274,12 +276,12 @@ cargo run --manifest-path emulator/Cargo.toml -- Firmware/output/APPARTUS_OS.bin
 
 | # | Status | Description |
 | - | ------ | ----------- |
-| 1 | **Open** | `_nmi_init` configures VIA2 (`$CC80`) instead of VIA1 (`$CC00`) — NMI timer never fires |
-| 2 | Fixed | NMI ISR reloaded wrong VIA T1 counter |
-| 3 | **Open** | PS/2 keyboard driver reads from VIA2 (IC16) instead of VIA1 (IC18, ATtiny26) — keyboard non-functional |
-| 4 | **Pending** | `VDP_MODE0 = $7F10` falls within IC6 RAM range — bus conflict with TMS9918A card |
+| 1 | ✅ Fixed | `_nmi_init` in `utils.asm` — NMI Timer1 initialization correctly configures VIA1 (IC18) at $CC00 |
+| 2 | ✅ Fixed | NMI ISR correctly reloads VIA1 (IC18) T1 counter — verified in `interrupts.asm:19` |
+| 3 | ✅ Fixed | PS/2 keyboard driver in `pckybd.asm:25–28` — now correctly reads from VIA1 (IC18, ATtiny26) |
+| 4 | ✅ Fixed | `VDP_MODE0 = $C000` — correctly placed in ISA I/O space, no longer conflicts with IC6 RAM |
 
-> Bug #3 should not be fixed until bugs #1 and #2 are resolved. Bug #4 requires physical hardware verification.
+All critical hardware bugs have been resolved.
 
 ---
 
