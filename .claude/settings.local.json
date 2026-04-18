@@ -114,7 +114,16 @@
       "Bash(powershell -Command \"Set-Location 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware'; cmd /c build_appartus.bat 2>&1\")",
       "Bash(powershell -Command \"Set-Location 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware'; & cmd.exe /c 'build_appartus.bat'\")",
       "Bash(powershell -Command \"& 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware\\\\\\\\build_appartus.bat'\")",
-      "Bash(powershell -Command \"Set-Location 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware'; & .\\\\build_appartus.bat\")"
+      "Bash(powershell -Command \"Set-Location 'C:\\\\\\\\Users\\\\\\\\adolf\\\\\\\\GIT\\\\\\\\Project65\\\\\\\\Firmware'; & .\\\\build_appartus.bat\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(ca65 --cpu 65c02 os/appartus_basic.asm -o ..\\\\output\\\\appartus_basic.o)",
+      "Bash(cmd /c \"cd src && ca65 --cpu 65c02 os/appartus_basic.asm -o ../output/appartus_basic.o 2>nul && cd ../output && ld65 -C ../config/appartus_os.cfg -m appartus_os.map crt0_p65.o main_appartus.o stubs_min.o acia.o ihex.o utils.o routines.o vectors.o interrupts.o zeropage.o jumptable.o appartus_jmptbl_ext.o appartus_zp.o appartus_ramdisk.o appartus_fileio.o appartus_shell.o appartus_basic.o C:\\\\CC65\\\\lib\\\\none.lib -o APPARTUS_OS.bin 2>&1 && echo OK\")",
+      "Bash(rm -f APPARTUS_OS.bin)",
+      "Bash(ld65 -C ../config/appartus_os.cfg -m appartus_os.map -Ln appartus_os.lbl crt0_p65.o main_appartus.o stubs_min.o acia.o ihex.o utils.o routines.o vectors.o interrupts.o zeropage.o jumptable.o appartus_jmptbl_ext.o appartus_zp.o appartus_ramdisk.o appartus_fileio.o appartus_shell.o appartus_basic.o C:\\\\\\\\CC65\\\\\\\\lib\\\\\\\\none.lib -o APPARTUS_OS.bin)",
+      "Bash(bash -c 'cd src && ca65 --cpu 65c02 os/appartus_basic.asm -o ../output/appartus_basic.o 2>&1 | grep -v \"^os.*Warning\" && cd ../output && ld65 -C ../config/appartus_os.cfg -m appartus_os.map crt0_p65.o main_appartus.o stubs_min.o acia.o ihex.o utils.o routines.o vectors.o interrupts.o zeropage.o jumptable.o appartus_jmptbl_ext.o appartus_zp.o appartus_ramdisk.o appartus_fileio.o appartus_shell.o appartus_basic.o /c/CC65/lib/none.lib -o APPARTUS_OS.bin 2>&1 && wc -c APPARTUS_OS.bin && echo \"✓ Hotovo\"')",
+      "Bash(bash -c 'cd src && ca65 --cpu 65c02 os/appartus_basic.asm -o ../output/appartus_basic.o 2>&1 | grep -i error')",
+      "Bash(ld65 -C ../config/appartus_os.cfg -m appartus_os.map crt0_p65.o main_appartus.o stubs_min.o acia.o ihex.o utils.o routines.o vectors.o interrupts.o zeropage.o jumptable.o appartus_jmptbl_ext.o appartus_zp.o appartus_ramdisk.o appartus_fileio.o appartus_shell.o appartus_basic.o /c/CC65/lib/none.lib -o APPARTUS_OS.bin)"
     ]
   }
 }

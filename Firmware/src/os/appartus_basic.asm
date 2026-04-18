@@ -2469,7 +2469,7 @@ _bas_cmd_load:
 ; ============================================================
 .segment "RODATA"
 
-str_bas_banner: .byte "P65 BASIC v1.0",0
+str_bas_banner: .byte "P65 BASIC v1.1",0
 str_bas_hint:   .byte "NEW LIST RUN SAVE LOAD BYE",0
 str_bas_prompt: .byte "BASIC> ",0
 str_ok:         .byte "OK",0

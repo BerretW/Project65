@@ -405,12 +405,32 @@ class P65Uploader:
             if fg:
                 btn.configure(style=f"{fg}.TButton")
 
+        # ── LSAVE ───────────────────────────────────────────────────────────
+        frm_lsave = ttk.LabelFrame(
+            self.root, text="LSAVE — přijmout HEX a uložit do RAMDisku"
+        )
+        frm_lsave.grid(row=3, column=0, columnspan=2, sticky="ew", **PAD)
+
+        ttk.Label(frm_lsave, text="Jméno:").grid(row=0, column=0, **PAD)
+        self.lsave_name_var = tk.StringVar()
+        ttk.Entry(frm_lsave, textvariable=self.lsave_name_var,
+                  width=10).grid(row=0, column=1, **PAD)
+
+        self.lsave_file_var = tk.StringVar()
+        ttk.Entry(frm_lsave, textvariable=self.lsave_file_var, width=34,
+                  state="readonly").grid(row=0, column=2, **PAD)
+        ttk.Button(frm_lsave, text="Vybrat .hex…",
+                   command=self._pick_lsave_file).grid(row=0, column=3, **PAD)
+        self.btn_lsave = ttk.Button(frm_lsave, text="LSAVE ⬆",
+                                    command=self._cmd_lsave_ui, state="disabled")
+        self.btn_lsave.grid(row=0, column=4, **PAD)
+
         # ── Terminál ────────────────────────────────────────────────────────
         frm_term = ttk.LabelFrame(
             self.root,
             text="Terminál  [přímý vstup · Enter = odeslat · Backspace · ^R = restart]",
         )
-        frm_term.grid(row=3, column=0, columnspan=2, sticky="nsew", **PAD)
+        frm_term.grid(row=4, column=0, columnspan=2, sticky="nsew", **PAD)
 
         self.terminal = TerminalWidget(frm_term, send_callback=self._terminal_send)
         self.terminal.grid(row=0, column=0, columnspan=2, sticky="nsew",
@@ -474,6 +494,7 @@ class P65Uploader:
             self.lbl_status.config(text=f"●  {desc}", foreground="green")
             self.btn_connect.config(text="Odpojit")
             self.btn_upload.config(state="normal")
+            self.btn_lsave.config(state="normal")
             self._log(f"Připojeno: {desc}\n", "info")
             self.terminal.focus()
 
@@ -489,6 +510,7 @@ class P65Uploader:
         self.lbl_status.config(text="●  Odpojeno", foreground="gray")
         self.btn_connect.config(text="Připojit")
         self.btn_upload.config(state="disabled")
+        self.btn_lsave.config(state="disabled")
         self._log("Odpojeno.\n", "info")
 
     # -----------------------------------------------------------------------
@@ -512,6 +534,7 @@ class P65Uploader:
         self.lbl_status.config(text="●  Odpojeno", foreground="gray")
         self.btn_connect.config(text="Připojit")
         self.btn_upload.config(state="disabled")
+        self.btn_lsave.config(state="disabled")
         self._log("Spojení ukončeno vzdálenou stranou.\n", "error")
 
     def _poll_rx(self):
@@ -734,6 +757,88 @@ class P65Uploader:
                             f"Chyba při nahrávání HEX: {e}\n", "error")
         finally:
             self._upload_in_progress = False
+            self.root.after(0, self.btn_upload.config, {"state": "normal"})
+            self.root.after(0, self.progress.config,
+                            {"maximum": UPLOAD_SIZE, "value": 0})
+            self.root.after(0, self.lbl_progress.config, {"text": ""})
+
+    # -----------------------------------------------------------------------
+    # LSAVE
+    # -----------------------------------------------------------------------
+    def _pick_lsave_file(self):
+        path = filedialog.askopenfilename(
+            title="Vyber Intel HEX soubor pro LSAVE",
+            filetypes=[("Intel HEX", "*.hex"), ("Všechny soubory", "*.*")],
+            initialdir=os.path.join(os.path.dirname(__file__), "..",
+                                    "Firmware", "output"),
+        )
+        if not path:
+            return
+        self.lsave_file_var.set(path)
+        size = os.path.getsize(path)
+        self._log(f"LSAVE soubor: {os.path.basename(path)}  ({size} B)\n", "info")
+
+    def _cmd_lsave_ui(self):
+        if self._upload_in_progress or not self._is_connected():
+            return
+        name = self.lsave_name_var.get().strip().upper()
+        if not name or len(name) > 8:
+            messagebox.showerror("Chyba", "Jméno musí být 1–8 znaků.")
+            return
+        path = self.lsave_file_var.get()
+        if not path or not os.path.exists(path):
+            messagebox.showerror("Chyba", "Nejprve vyber .hex soubor.")
+            return
+        threading.Thread(target=self._do_lsave, args=(name, path),
+                         daemon=True).start()
+
+    def _do_lsave(self, name: str, path: str):
+        self._upload_in_progress = True
+        self.root.after(0, self.btn_lsave.config, {"state": "disabled"})
+        self.root.after(0, self.btn_upload.config, {"state": "disabled"})
+        try:
+            with open(path) as f:
+                raw_lines = f.readlines()
+            records = [l.strip() for l in raw_lines if l.strip().startswith(":")]
+            if not records:
+                self.root.after(0, self._log,
+                                "Prázdný nebo neplatný .hex soubor.\n", "error")
+                return
+
+            payload = b"".join((r + "\r\n").encode("ascii") for r in records)
+            total = len(payload)
+            self._upload_total = total
+            self.root.after(0, self.progress.config, {"maximum": total, "value": 0})
+
+            # Pošli příkaz LSAVE do shellu AppartusOS
+            cmd = f"LSAVE {name}\r"
+            self.conn.write(cmd.encode("ascii"))
+            self.root.after(0, self._log,
+                            f"→ LSAVE {name}  ({len(records)} záznamů, čekám…)\n",
+                            "info")
+            time.sleep(0.4)     # počkej, než firmware vytiskne výzvu a přejde na ihex_load
+
+            sent = 0
+            for i in range(0, len(payload), CHUNK_SIZE):
+                if not (self.conn and self.conn.is_open):
+                    self.root.after(0, self._log,
+                                    "Přenos přerušen – spojení ztraceno.\n", "error")
+                    return
+                chunk = payload[i:i + CHUNK_SIZE]
+                self.conn.write(chunk)
+                sent += len(chunk)
+                self.root.after(0, self._update_progress,
+                                sent, sent * 100 // total)
+
+            self.root.after(0, self._log,
+                            f"LSAVE {name}: přenos dokončen ({sent} B).\n", "info")
+            self.root.after(0, self.progress.config, {"value": total})
+            self.root.after(0, self.lbl_progress.config, {"text": "100 %"})
+        except Exception as e:
+            self.root.after(0, self._log, f"Chyba LSAVE: {e}\n", "error")
+        finally:
+            self._upload_in_progress = False
+            self.root.after(0, self.btn_lsave.config, {"state": "normal"})
             self.root.after(0, self.btn_upload.config, {"state": "normal"})
             self.root.after(0, self.progress.config,
                             {"maximum": UPLOAD_SIZE, "value": 0})

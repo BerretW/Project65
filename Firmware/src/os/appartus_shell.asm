@@ -825,13 +825,13 @@ _strcpy_to_osname:
 RDF_RUN = $02
 
 str_banner:
-    .byte "AppartusOS v1.1 [P65/W65C02]",0
+    .byte "AppartusOS v1.2",0
 str_sub:
-    .byte "HELP for commands.",0
+    .byte "HELP for help.",0
 str_prompt:
     .byte "> ",0
 str_version:
-    .byte "AppartusOS v1.1 2026",0
+    .byte "AppartusOS v1.2 2026",0
 str_rd_fmt:
     .byte "RAMDisk init...",0
 str_help:
@@ -841,9 +841,9 @@ str_help:
 str_fmt_confirm:
     .byte "Format? ALL LOST. (Y/N): ",0
 str_fmt_done:
-    .byte "Formatted.",0
+    .byte "Fmated.",0
 str_cancelled:
-    .byte "Cancelled.",0
+    .byte "Cancel.",0
 str_load_wait:
     .byte "Send Intel HEX (ESC=abort)...",0
 str_load_ok:
