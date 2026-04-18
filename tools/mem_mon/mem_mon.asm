@@ -17,20 +17,21 @@
 ROM_PUTS    = $FF0C   ; print null-terminated string (A=lo, X=hi)
 ROM_PRINTNL = $FF18   ; print string + CR+LF (A=lo, X=hi)
 ROM_PUTC    = $FF09   ; print char in A
-ROM_GETINP  = $FF21   ; wait for keyboard or serial → A
+ROM_GETC    = $FF0F   ; blocking ACIA receive → A  (jednodušší než ROM_GETINP)
 ROM_PUTNL   = $FF15   ; send CR+LF
 ROM_PRTBYTE = $FF1B   ; print A as 2 hex digits
 
 IBUF    = $0300       ; input line buffer (64 B, page 3 — volná RAM)
 IBUF_SZ = 64
 
-; ZP $F0–$F7 (mimo OS ZP $40–$53 a EWOZ $24–$30)
+; ZP $F0–$FF (mimo OS ZP $40–$53 a EWOZ $24–$30)
 ZP_ARLO = $F0         ; aktuální adresa lo
 ZP_ARHI = $F1         ; aktuální adresa hi
 ZP_TMP  = $F2         ; scratch byte (výsledek try_hex2)
 ZP_CNT  = $F3         ; čítač řádků dump
 ZP_PTR  = $F4         ; 2-byte pointer pro (zp),Y čtení ($F4=lo, $F5=hi)
 ZP_SAV  = $F6         ; uložená adresa pro restore v try_hex4 ($F6=lo, $F7=hi)
+ROW_BUF = $F8         ; 8-byte řádkový buffer (čteme každý bajt jen 1×, $F8–$FF)
 
 .org $3200
 
@@ -122,13 +123,25 @@ cmd_write:
     JMP main_loop
 
 ; ── dump_row: jeden řádek AAAA: BB BB BB BB BB BB BB BB  ....
+; Každý bajt čteme jen 1× do ROW_BUF, pak tiskneme z bufferu.
+; Tím se vyhneme dvojitému čtení IO registrů (ACIA, VIA…).
 dump_row:
+    ; Nastav ZP_PTR na aktuální adresu
     LDA ZP_ARLO
     STA ZP_PTR
     LDA ZP_ARHI
     STA ZP_PTR+1
 
-    ; adresa
+    ; Načti 8 bajtů do ROW_BUF ($F8–$FF) — každý přečten právě 1×
+    LDY #0
+@rd:
+    LDA (ZP_PTR),Y
+    STA ROW_BUF,Y
+    INY
+    CPY #8
+    BNE @rd
+
+    ; Tiskni adresu
     LDA ZP_ARHI
     JSR ROM_PRTBYTE
     LDA ZP_ARLO
@@ -138,10 +151,10 @@ dump_row:
     LDA #' '
     JSR ROM_PUTC
 
-    ; hex bajty
+    ; Tiskni hex bajty z ROW_BUF
     LDY #0
 @hex:
-    LDA (ZP_PTR),Y
+    LDA ROW_BUF,Y
     JSR ROM_PRTBYTE
     LDA #' '
     JSR ROM_PUTC
@@ -154,10 +167,10 @@ dump_row:
     LDA #' '
     JSR ROM_PUTC
 
-    ; ASCII
+    ; Tiskni ASCII z ROW_BUF
     LDY #0
 @asc:
-    LDA (ZP_PTR),Y
+    LDA ROW_BUF,Y
     CMP #$20
     BCC @dot
     CMP #$7F
@@ -172,7 +185,7 @@ dump_row:
 
     JSR ROM_PUTNL
 
-    ; posun adresy o 8
+    ; Posun adresy o 8
     LDA ZP_ARLO
     CLC
     ADC #8
@@ -182,11 +195,13 @@ dump_row:
 @done:
     RTS
 
-; ── get_line: čte řádek do IBUF, null-terminuje ─────────────
+; ── get_line: čte řádek do IBUF přes ACIA ───────────────────
+; Používá ROM_GETC ($FF0F = _acia_getc) — čistý ACIA příjem
+; bez cc65 softwarového zásobníku ani keyboard handleru.
 get_line:
     LDX #0
 @ch:
-    JSR ROM_GETINP
+    JSR ROM_GETC      ; blokující ACIA příjem → A
     CMP #$0D
     BEQ @done
     CMP #$0A
@@ -232,7 +247,7 @@ skip_sp:
 ; ── try_hex4: AAAA z IBUF+X → ZP_ARHI:ZP_ARLO ───────────────
 ; C=0 ok (X+=4), C=1 fail (adresa nezměněna)
 try_hex4:
-    LDA ZP_ARLO       ; ulož aktuální adresu pro případ selhání
+    LDA ZP_ARLO
     STA ZP_SAV
     LDA ZP_ARHI
     STA ZP_SAV+1
@@ -266,7 +281,7 @@ try_hex4:
     CLC
     RTS
 @fail:
-    LDA ZP_SAV        ; obnov adresu
+    LDA ZP_SAV
     STA ZP_ARLO
     LDA ZP_SAV+1
     STA ZP_ARHI
@@ -302,7 +317,7 @@ hex_nib:
     BCC @bad
     CMP #'9'+1
     BCC @digit
-    AND #$DF            ; uppercase
+    AND #$DF            ; uppercase (a-f → A-F)
     CMP #'A'
     BCC @bad
     CMP #'F'+1
