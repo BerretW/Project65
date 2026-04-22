@@ -1,5 +1,5 @@
 ; vera_test.asm — VERA text display test
-; Layer 0, 1bpp tile mode, 80×60 text (640×480 VGA, 8×8 font z font.h)
+; Layer 0, 1bpp tile mode, 80×60 text (640×480 VGA, 8×8 font z font.asm)
 ;
 ; VRAM layout:
 ;   $00000  tile map  — 128×64 entries × 2 B = $4000 B
@@ -55,11 +55,38 @@ start:
     LDX #>msg_title
     JSR ROM_PRINTNL
 
-    ; --- 1. VERA reset ---
+    ; --- 1. VERA reset (zajistí čistý stav registrů a výchozí paletu) ---
     ;LDA #$80
-    ;STA VERA_CTRL
+    ;STA VERA_CTRL           ; RESET bit — FPGA se rekonfiguruje
+    LDX #255                ; delay ~200 ms při 1 MHz
+@rst_dly:
+    LDY #255
+@rst_dly2:
+    DEY
+    BNE @rst_dly2
+    DEX
+    BNE @rst_dly
+    ;LDA #$00
+    ;STA VERA_CTRL           ; DCSEL=0, ADDRSEL=0
+
+    ; --- 1b. Explicitní inicializace palety ---
+    ; Barva 0 = černá ($000), barva 1 = bílá ($FFF)
+    ; Palette VRAM base $1FA00, entry formát: [G:B], [0:R]
     LDA #$00
-    STA VERA_CTRL       ; DCSEL=0, ADDRSEL=0
+    STA VERA_ADDRLO
+    LDA #$FA
+    STA VERA_ADDRMI
+    LDA #$11                ; increment=1, bit16=1 (addr > $FFFF)
+    STA VERA_ADDRHI
+    LDA #$00
+    STA VERA_DATA0          ; barva 0 byte0: G=0, B=0
+    STA VERA_DATA0          ; barva 0 byte1: R=0  → černá
+    LDA #$FF
+    STA VERA_DATA0          ; barva 1 byte0: G=$F, B=$F
+    LDA #$0F
+    STA VERA_DATA0          ; barva 1 byte1: R=$F → bílá
+    ;LDA #$00
+    ;STA VERA_CTRL           ; obnov DCSEL=0 pro DC registry
 
     ; --- 2. Display composer: VGA 1:1, border černý ---
     LDA #$80            ; HSCALE = 128 → 640px / 8px = 80 sloupců
@@ -106,6 +133,9 @@ upload_font:
     LDA #<msg_font
     LDX #>msg_font
     JSR ROM_PRINTNL
+    LDA #<msg_done      ; tiskni před clear — clear přepíše vše na VERA
+    LDX #>msg_done
+    JSR ROM_PRINTNL
 
     ; --- 5. Smaž tile mapu: 128×64 × 2B = 16384 B (space + barva $01) ---
     LDA #$00
@@ -143,7 +173,7 @@ clear_col:
     STA ZP_PTR+1
     JSR vera_puts
 
-    LDA #4
+    LDA #25
     STA ZP_ROW
     LDA #4
     STA ZP_COL
@@ -153,9 +183,6 @@ clear_col:
     STA ZP_PTR+1
     JSR vera_puts
 
-    LDA #<msg_done
-    LDX #>msg_done
-    JSR ROM_PRINTNL
     RTS
 
 ; ============================================================
@@ -196,10 +223,10 @@ msg_font:   .byte "Font uploaded to VRAM $04000.", 0
 msg_done:   .byte "Display active - check VGA monitor.", 0
 
 ; Stringy na obrazovku (zobrazí se na VGA)
-msg_vera:   .byte "HELLO VERA!", 0
+msg_vera:   .byte "HELLO VERA! PROJECT65 SBC 65C02", 0
 msg_line2:  .byte "PROJECT65 SBC 65C02", 0
 
 ; ============================================================
-; Font data — 128 znaků × 8 B, ASCII 0–127 (z font.h)
+; Font data — 128 znaků × 8 B, ASCII 0–127 (z font.asm)
 ; ============================================================
 .include "font.asm"
