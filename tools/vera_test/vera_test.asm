@@ -1,7 +1,10 @@
-; vera_test.asm — Test přítomnosti VERA čipu v systému
+; vera_test.asm — VERA VRAM write test
+; Adapted from original author's code (Frank van den Hoef); VERA base $8000 → $C000
 ;
-; Detekce: write/readback pattern $A5/$5A na VERA registry.
-; Při selhání vypíše číslo kroku, přečtenou hodnotu a očekávanou hodnotu.
+; Registers per VERA Programmer's Reference v0.9:
+;   $00 ADDRx_L   $01 ADDRx_M   $02 ADDRx_H   $03 DATA0   $04 DATA1
+;   $05 CTRL      $06 IEN       $07 ISR        $08 IRQLINE_L / SCANLINE_L
+;   $09 DC_VIDEO  $0A DC_HSCALE $0B DC_VSCALE  $0C DC_BORDER
 ;
 ; Sestavení:
 ;   ca65 -t none vera_test.asm -o vera_test.o
@@ -11,7 +14,7 @@
 ;
 ; Použití v AppartusOS:
 ;   LOAD              ← pošli vera_test.hex
-;   SAVE VERATEST 3100 0100
+;   SAVE VERATEST 3100 0080
 ;   RUN VERATEST
 
 ; --- ROM API ---
@@ -21,157 +24,84 @@ ROM_PUTC    = $FF09   ; print char in A
 ROM_PRTBYTE = $FF1B   ; print A as 2 hex digits
 ROM_PUTNL   = $FF15   ; send CR+LF
 
-; --- VERA registry ---
-VERA_ADDRLO = $C300
-VERA_ADDRMI = $C301
-VERA_ADDRHI = $C302
-VERA_DATA0  = $C303
-VERA_DATA1  = $C304
-VERA_CTRL   = $C305
-VERA_IEN    = $C306
-VERA_ISR    = $C307
+; --- VERA registry ($C000 base, dle spec v0.9) ---
+VERA_ADDRLO  = $C000   ; VRAM address (7:0)
+VERA_ADDRMI  = $C001   ; VRAM address (15:8)
+VERA_ADDRHI  = $C002   ; [7:4]=Address Increment, [3]=DECR, [0]=addr bit 16
+VERA_DATA0   = $C003   ; VRAM data port 0
+VERA_DATA1   = $C004   ; VRAM data port 1
+VERA_CTRL    = $C005   ; [7]=RESET, [1]=DCSEL, [0]=ADDRSEL
+VERA_IEN     = $C006
+VERA_ISR     = $C007
 
-; --- ZP scratch (mimo OS ZP $40–$53) ---
-ZP_GOT      = $F0     ; přečtená hodnota
-ZP_EXP      = $F1     ; očekávaná hodnota
+; Display composer registry (DCSEL=0, base+$09)
+VERA_DC_VIDEO  = $C009   ; [6]=Sprites, [5]=L1, [4]=L0, [1:0]=OutMode (1=VGA)
+VERA_DC_HSCALE = $C00A   ; 128 = 1:1
+VERA_DC_VSCALE = $C00B
 
 .org $3100
 
+; ============================================================
+; Test 1 — fill VRAM from address $000010:
+;   256× (character=X, color=$6E) + loop2 spaces
+;   (originální kod autora; ADDRHI=0 → auto-increment=0,
+;    všechny zápisy míří na adresu $000010)
 ; ============================================================
 start:
     LDA #<msg_title
     LDX #>msg_title
     JSR ROM_PRINTNL
 
-    ; ── Krok 1: soft-reset VERA, ADDRLO musí být $00 ─────────
-    LDA #$80
-    STA VERA_CTRL
+    LDA #$10
+    STA VERA_ADDRLO   ; VRAM low address = $10
     LDA #$00
-    STA VERA_CTRL
+    STA VERA_ADDRMI   ; VRAM mid address = $00
+    STA VERA_ADDRHI   ; VRAM high + auto-increment = 0
+    LDX #0
+    LDA #$11
+    STA VERA_DC_VIDEO
+loop1:
+    TXA
+    STA VERA_DATA0    ; character = X
+    LDA #$6E
+    STA VERA_DATA0    ; color = $6E
+    INX
+    BNE loop1
 
-    LDA VERA_ADDRLO
-    STA ZP_GOT
-    LDA #$00
-    STA ZP_EXP
-    LDA ZP_GOT
-    BNE fail1
+    LDY #10
+loop2:
+    LDA #$20
+    STA VERA_DATA0    ; space
+    LDA #$6E
+    STA VERA_DATA0    ; color
+    INX
+    BNE loop2
 
-    ; ── Krok 2: ADDRLO write/readback $A5 ────────────────────
-    LDA #$A5
-    STA VERA_ADDRLO
-    LDA VERA_ADDRLO
-    STA ZP_GOT
-    LDA #$A5
-    STA ZP_EXP
-    LDA ZP_GOT
-    CMP #$A5
-    BNE fail2
-
-    ; ── Krok 3: ADDRLO write/readback $5A ────────────────────
-    LDA #$5A
-    STA VERA_ADDRLO
-    LDA VERA_ADDRLO
-    STA ZP_GOT
-    LDA #$5A
-    STA ZP_EXP
-    LDA ZP_GOT
-    CMP #$5A
-    BNE fail3
-
-    ; ── Krok 4: ADDRMI write/readback $A5 ────────────────────
-    LDA #$A5
-    STA VERA_ADDRMI
-    LDA VERA_ADDRMI
-    STA ZP_GOT
-    LDA #$A5
-    STA ZP_EXP
-    LDA ZP_GOT
-    CMP #$A5
-    BNE fail4
-
-    ; ── Krok 5: ADDRHI write/readback $03 ────────────────────
-    LDA #$03
-    STA VERA_ADDRHI
-    LDA VERA_ADDRHI
-    AND #$0F            ; ADDRHI: bity 7-4 jsou incr/dec, čteme jen spodní
-    STA ZP_GOT
-    LDA #$03
-    STA ZP_EXP
-    LDA ZP_GOT
-    CMP #$03
-    BNE fail5
-
-; ── Vše prošlo ───────────────────────────────────────────────
-detect_ok:
-    LDA #<msg_ok
-    LDX #>msg_ok
+    LDA #<msg_t1
+    LDX #>msg_t1
     JSR ROM_PRINTNL
 
-    LDA #<msg_isr_lbl
-    LDX #>msg_isr_lbl
-    JSR ROM_PUTS
-    LDA VERA_ISR
-    JSR ROM_PRTBYTE
-    JSR ROM_PUTNL
-
-    ; Vyčisti adresní registry
-    LDA #$00
+; ============================================================
+; Test 2 — write char $02 at $000010 twice
+; ============================================================
+    LDA #$10
     STA VERA_ADDRLO
+    LDA #$00
     STA VERA_ADDRMI
     STA VERA_ADDRHI
+    LDX #79           ; column (pro budoucí výpočet adresy)
+    LDA #$02
+
+    STA VERA_DATA0
+    STA VERA_DATA0
+
+    LDA #<msg_t2
+    LDX #>msg_t2
+    JSR ROM_PRINTNL
 
     RTS
 
-; ── Fail větve — každá nastaví msg_stepX a padne do debug_fail
-fail1:
-    LDA #<msg_s1
-    LDX #>msg_s1
-    JMP debug_fail
-fail2:
-    LDA #<msg_s2
-    LDX #>msg_s2
-    JMP debug_fail
-fail3:
-    LDA #<msg_s3
-    LDX #>msg_s3
-    JMP debug_fail
-fail4:
-    LDA #<msg_s4
-    LDX #>msg_s4
-    JMP debug_fail
-fail5:
-    LDA #<msg_s5
-    LDX #>msg_s5
-    JMP debug_fail
-
-; ── Společný fail výpis ───────────────────────────────────────
-debug_fail:
-    JSR ROM_PUTS            ; vytiskne "FAIL krok N: "
-
-    LDA #<msg_got
-    LDX #>msg_got
-    JSR ROM_PUTS
-    LDA ZP_GOT
-    JSR ROM_PRTBYTE         ; vytiskne přečtenou hodnotu jako hex
-
-    LDA #<msg_exp
-    LDX #>msg_exp
-    JSR ROM_PUTS
-    LDA ZP_EXP
-    JSR ROM_PRTBYTE         ; vytiskne očekávanou hodnotu jako hex
-
-    JSR ROM_PUTNL
-    RTS
-
-; ── Stringy ──────────────────────────────────────────────────
-msg_title:   .byte "=== VERA Detection Test ===", 0
-msg_ok:      .byte "VERA OK — chip detected and responding.", 0
-msg_isr_lbl: .byte "  ISR = $", 0
-msg_got:     .byte "  got=$", 0
-msg_exp:     .byte " exp=$", 0
-
-msg_s1: .byte "FAIL step 1 (reset ADDRLO != $00):", 0
-msg_s2: .byte "FAIL step 2 (ADDRLO w/r $A5):", 0
-msg_s3: .byte "FAIL step 3 (ADDRLO w/r $5A):", 0
-msg_s4: .byte "FAIL step 4 (ADDRMI w/r $A5):", 0
-msg_s5: .byte "FAIL step 5 (ADDRHI w/r $03):", 0
+; --- Stringy ---
+msg_title: .byte "=== VERA VRAM Write Test ===", 0
+msg_t1:    .byte "Test 1 OK: char+color pairs written.", 0
+msg_t2:    .byte "Test 2 OK: char $02 written.", 0
