@@ -16,12 +16,22 @@
 
 ROM_PRINTNL = $FF18 
 VGA_BASE = $C000
+REG_CTRL = $00
+REG_TXT_PTR_LO = $01
+REG_TXT_PTR_HI = $02
+REG_TXT_DATA = $03
+REG_FONT_PTR_LO = $04
+REG_FONT_PTR_HI = $05
+REG_FONT_DATA = $06
+
+
 .org $3100
 
 ; ============================================================
 start:
+; Zapnout video
     LDA #$01
-    STA VGA_BASE          ; zapni textový režim
+    STA VGA_BASE + REG_CTRL
     LDA #<msg_title
     LDX #>msg_title
     JSR ROM_PRINTNL
