@@ -23,6 +23,14 @@ REG_TXT_DATA = $03
 REG_FONT_PTR_LO = $04
 REG_FONT_PTR_HI = $05
 REG_FONT_DATA = $06
+REG_STATUS = $07
+REG_HW_VERSION = $08
+REG_HW_ID = $09
+REG_FG_COLOR = $0A
+REG_BG_COLOR = $0B
+
+HW_VERSION_LITE = $01
+HW_ID_LITE = $A3
 
 
 .org $3100
@@ -30,13 +38,22 @@ REG_FONT_DATA = $06
 ; ============================================================
 start:
 ; Zapnout video
-    LDA #$01
+    LDA #$00
     STA VGA_BASE + REG_CTRL
     LDA #<msg_title
     LDX #>msg_title
     JSR ROM_PRINTNL
+    ; Bílý text (FG = 0xFF)
+    LDA #$FF
+    STA VGA_BASE + REG_FG_COLOR
+
+    ; Modré pozadí (BG = 0x03)
+    LDA #$03
+    STA VGA_BASE + REG_BG_COLOR
+    
+    ; Zapnout video
     LDA #$01
-    STA VGA_BASE          ; zapni textový režim
+    STA VGA_BASE + REG_CTRL
     RTS
 
 ; ============================================================
