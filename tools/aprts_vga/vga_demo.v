@@ -35,7 +35,9 @@ module vga_demo (
     reg [7:0]  addr_m = 8'h00;
     reg [7:0]  addr_h = 8'h00; 
     reg [7:0]  ctrl_reg = 8'h80; // [7] = Splash screen, [3:1] = Volba palety, [0] = Režim (0 = Text, 1 = Bitmapa)
-    reg [7:0]  debug_ctrl_reg = 8'h01; // [0] = Debug overlay enable, default on
+    reg [7:0]  debug_ctrl_reg = 8'h01; // [7:5] = manual debug color, [1] = SRAM clear request, [0] = overlay enable
+    reg        sram_clear_request_toggle = 0;
+    reg        sram_clear_active = 0;
     
     wire [18:0] current_vram_addr = {addr_h[2:0], addr_m, addr_l};
     wire [3:0]  step_sel = addr_h[7:4];
@@ -86,7 +88,7 @@ module vga_demo (
     reg [7:0]  cpu_read_data;
     reg        palette_write_done_pulse = 0;
 
-    wire [7:0] status_reg = {cpu_write_pending, cpu_read_pending, 5'b00000, debug_ctrl_reg[0]};
+    wire [7:0] status_reg = {cpu_write_pending, cpu_read_pending, sram_clear_active, 4'b0000, debug_ctrl_reg[0]};
 
     always @(posedge clk_25mhz) begin
         palette_write_done_pulse <= 1'b0;
@@ -115,6 +117,9 @@ module vga_demo (
                 end
                 4'd5: begin
                     debug_ctrl_reg <= cpu_write_bus_data;
+                    if (cpu_write_bus_data[1]) begin
+                        sram_clear_request_toggle <= ~sram_clear_request_toggle;
+                    end
                 end
             endcase
         end else if (reg_read_pulse && cpu_read_addr == 4'd3) begin
@@ -138,7 +143,9 @@ module vga_demo (
 
     // Pri zapisu do externi SRAM musi FPGA aktivne ridit datovou sbernici.
     // Bez tohoto tri-state driveru by zapisy do VRAM neprobehly.
-    assign sram_data = (sram_we_n == 1'b0) ? cpu_write_data : 8'bz;
+    reg [7:0] sram_write_data = 8'h00;
+
+    assign sram_data = (sram_we_n == 1'b0) ? sram_write_data : 8'bz;
 
     // ==========================================
     // 2. VNITŘNÍ PALETTE RAM (M9K)
@@ -206,6 +213,8 @@ module vga_demo (
     reg [7:0] bitmap_pixel_reg = 8'h00; // Pouze jeden řadič pro zápis bitmapy ze SRAM
     reg       cpu_write_done = 0;
     reg       cpu_read_done = 0;
+    reg [18:0] sram_clear_addr = 19'h00000;
+    reg       sram_clear_seen_toggle = 0;
 
     wire [2:0] vga_phase = h_cnt[2:0];
     wire       video_mode = ctrl_reg[0]; // 0 = Textový režim, 1 = Bitmapový režim
@@ -217,7 +226,22 @@ module vga_demo (
         cpu_write_done <= 0;
         cpu_read_done <= 0;
 
-        if (video_mode) begin
+        if (!sram_clear_active && sram_clear_request_toggle != sram_clear_seen_toggle) begin
+            sram_clear_active <= 1'b1;
+            sram_clear_seen_toggle <= sram_clear_request_toggle;
+            sram_clear_addr <= 19'h00000;
+        end
+
+        if (sram_clear_active) begin
+            sram_addr <= sram_clear_addr;
+            sram_write_data <= 8'h00;
+            sram_we_n <= 1'b0;
+            if (sram_clear_addr == 19'h12BFF) begin
+                sram_clear_active <= 1'b0;
+            end else begin
+                sram_clear_addr <= sram_clear_addr + 1'b1;
+            end
+        end else if (video_mode) begin
             // BITMAPOVÝ REŽIM (TDM 1:1)
             if (h_cnt[0] == 1'b0) begin
                 sram_addr <= bitmap_pixel_addr;
@@ -227,6 +251,7 @@ module vga_demo (
 
                 if (cpu_write_pending && !is_palette_addr) begin
                     sram_addr <= current_vram_addr;
+                    sram_write_data <= cpu_write_data;
                     sram_we_n <= 1'b0;
                     cpu_write_done <= 1;
                 end else if (cpu_read_pending && !is_palette_addr) begin
@@ -261,6 +286,7 @@ module vga_demo (
                     // Volné sloty pro CPU
                     if (cpu_write_pending && !is_palette_addr) begin
                         sram_addr <= current_vram_addr;
+                        sram_write_data <= cpu_write_data;
                         sram_we_n <= 1'b0;
                         cpu_write_done <= 1;
                     end else if (cpu_read_pending && !is_palette_addr) begin
@@ -316,6 +342,7 @@ module vga_demo (
     reg [2:0] debug_code = 3'd0;
     reg [21:0] debug_hold_counter = 22'd0;
     reg [2:0] debug_r, debug_g, debug_b;
+    wire [2:0] debug_display_code = (debug_ctrl_reg[7:5] != 3'd0) ? debug_ctrl_reg[7:5] : debug_code;
 
     wire debug_overlay_on = debug_ctrl_reg[0] &&
                             display_on_node &&
@@ -349,7 +376,7 @@ module vga_demo (
     end
 
     always @(*) begin
-        case (debug_code)
+        case (debug_display_code)
             3'd1: begin debug_r = 3'b111; debug_g = 3'b000; debug_b = 3'b000; end // CPU write
             3'd2: begin debug_r = 3'b111; debug_g = 3'b111; debug_b = 3'b000; end // CPU read
             3'd3: begin debug_r = 3'b111; debug_g = 3'b000; debug_b = 3'b111; end // Palette write
