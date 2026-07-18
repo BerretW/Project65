@@ -88,7 +88,7 @@ module vga_demo (
     reg [7:0]  cpu_read_data;
     reg        palette_write_done_pulse = 0;
 
-    wire [7:0] status_reg = {cpu_write_pending, cpu_read_pending, sram_clear_active, 4'b0000, debug_ctrl_reg[0]};
+    wire [7:0] status_reg = {cpu_write_pending, cpu_read_pending, sram_clear_active, sram_diag_busy, sram_diag_done, sram_diag_error, 1'b0, debug_ctrl_reg[0]};
 
     always @(posedge clk_25mhz) begin
         palette_write_done_pulse <= 1'b0;
@@ -107,6 +107,7 @@ module vga_demo (
                             palette_ram_high[current_vram_addr[8:1]] <= cpu_write_bus_data[3:0];
                         end
                         palette_write_done_pulse <= 1'b1;
+                        {addr_h[2:0], addr_m, addr_l} <= current_vram_addr + step_value;
                     end else begin
                         cpu_write_data    <= cpu_write_bus_data;
                         cpu_write_pending <= 1; 
@@ -126,7 +127,7 @@ module vga_demo (
             cpu_read_pending <= 1; 
         end
 
-        if (cpu_write_done || palette_write_done_pulse) begin
+        if (cpu_write_done) begin
             cpu_write_pending <= 0;
             {addr_h[2:0], addr_m, addr_l} <= current_vram_addr + step_value;
         end
@@ -137,9 +138,15 @@ module vga_demo (
     end
 
     assign lv_data = (lv_cs == 1'b0 && lv_mem_r == 1'b0) ? 
-                     ((lv_addr == 4'd3) ? cpu_read_data :
-                      (lv_addr == 4'd4) ? ctrl_reg :
-                      (lv_addr == 4'd5) ? status_reg : 8'bz) : 8'bz;
+                     ((cpu_read_addr == 4'd3) ? cpu_read_data :
+                      (cpu_read_addr == 4'd4) ? ctrl_reg :
+                      (cpu_read_addr == 4'd5) ? status_reg :
+                      (cpu_read_addr == 4'd6) ? sram_diag_fail_addr[7:0] :
+                      (cpu_read_addr == 4'd7) ? sram_diag_fail_addr[15:8] :
+                      (cpu_read_addr == 4'd8) ? {5'b00000, sram_diag_fail_addr[18:16]} :
+                      (cpu_read_addr == 4'd9) ? sram_diag_fail_expected :
+                      (cpu_read_addr == 4'd10) ? sram_diag_fail_actual :
+                      (cpu_read_addr == 4'd11) ? {4'b0000, sram_diag_state} : 8'bz) : 8'bz;
 
     // Pri zapisu do externi SRAM musi FPGA aktivne ridit datovou sbernici.
     // Bez tohoto tri-state driveru by zapisy do VRAM neprobehly.
@@ -215,6 +222,37 @@ module vga_demo (
     reg       cpu_read_done = 0;
     reg [18:0] sram_clear_addr = 19'h00000;
     reg       sram_clear_seen_toggle = 0;
+    reg [3:0] sram_diag_state = 4'd0;
+    reg [2:0] sram_diag_index = 3'd0;
+    reg [18:0] sram_diag_addr = 19'h00000;
+    reg [7:0] sram_diag_data = 8'h00;
+    reg       sram_diag_busy = 1'b1;
+    reg       sram_diag_done = 1'b0;
+    reg       sram_diag_error = 1'b0;
+    reg [18:0] sram_diag_fail_addr = 19'h00000;
+    reg [7:0] sram_diag_fail_expected = 8'h00;
+    reg [7:0] sram_diag_fail_actual = 8'h00;
+
+    localparam SRAM_DIAG_WRITE_ADDR = 4'd0;
+    localparam SRAM_DIAG_WRITE_WE   = 4'd1;
+    localparam SRAM_DIAG_WRITE_HOLD = 4'd2;
+    localparam SRAM_DIAG_NEXT_WRITE = 4'd3;
+    localparam SRAM_DIAG_READ_ADDR  = 4'd4;
+    localparam SRAM_DIAG_READ_WAIT  = 4'd5;
+    localparam SRAM_DIAG_READ_CHECK = 4'd6;
+    localparam SRAM_DIAG_NEXT_READ  = 4'd7;
+    localparam SRAM_DIAG_DONE       = 4'd8;
+
+    always @(*) begin
+        case (sram_diag_index)
+            3'd0: begin sram_diag_addr = 19'h00000; sram_diag_data = 8'h55; end
+            3'd1: begin sram_diag_addr = 19'h00001; sram_diag_data = 8'hAA; end
+            3'd2: begin sram_diag_addr = 19'h03000; sram_diag_data = 8'hC3; end
+            3'd3: begin sram_diag_addr = 19'h037FF; sram_diag_data = 8'h3C; end
+            3'd4: begin sram_diag_addr = 19'h12BFE; sram_diag_data = 8'h5A; end
+            default: begin sram_diag_addr = 19'h12BFF; sram_diag_data = 8'hA5; end
+        endcase
+    end
 
     wire [2:0] vga_phase = h_cnt[2:0];
     wire       video_mode = ctrl_reg[0]; // 0 = Textový režim, 1 = Bitmapový režim
@@ -226,13 +264,89 @@ module vga_demo (
         cpu_write_done <= 0;
         cpu_read_done <= 0;
 
-        if (!sram_clear_active && sram_clear_request_toggle != sram_clear_seen_toggle) begin
+        if (sram_diag_busy) begin
+            case (sram_diag_state)
+                SRAM_DIAG_WRITE_ADDR: begin
+                    sram_addr <= sram_diag_addr;
+                    sram_write_data <= sram_diag_data;
+                    sram_we_n <= 1'b1;
+                    sram_oe_n <= 1'b1;
+                    sram_diag_state <= SRAM_DIAG_WRITE_WE;
+                end
+                SRAM_DIAG_WRITE_WE: begin
+                    sram_addr <= sram_diag_addr;
+                    sram_write_data <= sram_diag_data;
+                    sram_we_n <= 1'b0;
+                    sram_oe_n <= 1'b1;
+                    sram_diag_state <= SRAM_DIAG_WRITE_HOLD;
+                end
+                SRAM_DIAG_WRITE_HOLD: begin
+                    sram_addr <= sram_diag_addr;
+                    sram_write_data <= sram_diag_data;
+                    sram_we_n <= 1'b0;
+                    sram_oe_n <= 1'b1;
+                    sram_diag_state <= SRAM_DIAG_NEXT_WRITE;
+                end
+                SRAM_DIAG_NEXT_WRITE: begin
+                    sram_we_n <= 1'b1;
+                    sram_oe_n <= 1'b1;
+                    if (sram_diag_index == 3'd5) begin
+                        sram_diag_index <= 3'd0;
+                        sram_diag_state <= SRAM_DIAG_READ_ADDR;
+                    end else begin
+                        sram_diag_index <= sram_diag_index + 1'b1;
+                        sram_diag_state <= SRAM_DIAG_WRITE_ADDR;
+                    end
+                end
+                SRAM_DIAG_READ_ADDR: begin
+                    sram_addr <= sram_diag_addr;
+                    sram_we_n <= 1'b1;
+                    sram_oe_n <= 1'b0;
+                    sram_diag_state <= SRAM_DIAG_READ_WAIT;
+                end
+                SRAM_DIAG_READ_WAIT: begin
+                    sram_addr <= sram_diag_addr;
+                    sram_we_n <= 1'b1;
+                    sram_oe_n <= 1'b0;
+                    sram_diag_state <= SRAM_DIAG_READ_CHECK;
+                end
+                SRAM_DIAG_READ_CHECK: begin
+                    sram_addr <= sram_diag_addr;
+                    sram_we_n <= 1'b1;
+                    sram_oe_n <= 1'b0;
+                    if (sram_data != sram_diag_data) begin
+                        sram_diag_error <= 1'b1;
+                        if (!sram_diag_error) begin
+                            sram_diag_fail_addr <= sram_diag_addr;
+                            sram_diag_fail_expected <= sram_diag_data;
+                            sram_diag_fail_actual <= sram_data;
+                        end
+                    end
+                    sram_diag_state <= SRAM_DIAG_NEXT_READ;
+                end
+                SRAM_DIAG_NEXT_READ: begin
+                    sram_oe_n <= 1'b1;
+                    if (sram_diag_index == 3'd5) begin
+                        sram_diag_state <= SRAM_DIAG_DONE;
+                    end else begin
+                        sram_diag_index <= sram_diag_index + 1'b1;
+                        sram_diag_state <= SRAM_DIAG_READ_ADDR;
+                    end
+                end
+                default: begin
+                    sram_we_n <= 1'b1;
+                    sram_oe_n <= 1'b1;
+                    sram_diag_busy <= 1'b0;
+                    sram_diag_done <= 1'b1;
+                end
+            endcase
+        end else if (!sram_clear_active && sram_clear_request_toggle != sram_clear_seen_toggle) begin
             sram_clear_active <= 1'b1;
             sram_clear_seen_toggle <= sram_clear_request_toggle;
             sram_clear_addr <= 19'h00000;
         end
 
-        if (sram_clear_active) begin
+        else if (sram_clear_active) begin
             sram_addr <= sram_clear_addr;
             sram_write_data <= 8'h00;
             sram_we_n <= 1'b0;
@@ -341,8 +455,10 @@ module vga_demo (
 
     reg [2:0] debug_code = 3'd0;
     reg [21:0] debug_hold_counter = 22'd0;
+    reg [23:0] debug_blink_counter = 24'd0;
     reg [2:0] debug_r, debug_g, debug_b;
     wire [2:0] debug_display_code = (debug_ctrl_reg[7:5] != 3'd0) ? debug_ctrl_reg[7:5] : debug_code;
+    wire       debug_blink_on = debug_blink_counter[23];
 
     wire debug_overlay_on = debug_ctrl_reg[0] &&
                             display_on_node &&
@@ -350,9 +466,17 @@ module vga_demo (
                             v_cnt >= 10'd8 && v_cnt < 10'd32;
 
     always @(posedge clk_25mhz) begin
+        debug_blink_counter <= debug_blink_counter + 1'b1;
+
         if (!debug_ctrl_reg[0]) begin
             debug_code <= 3'd0;
             debug_hold_counter <= 22'd0;
+        end else if (sram_diag_busy) begin
+            debug_code <= 3'd6;        // SRAM diagnostika bezi
+        end else if (sram_diag_error) begin
+            debug_code <= debug_blink_on ? 3'd1 : 3'd0; // SRAM chyba blika cervene
+        end else if (sram_diag_done && debug_ctrl_reg[7:5] == 3'd0) begin
+            debug_code <= 3'd4;        // SRAM diagnostika OK
         end else if (reg_write_pulse) begin
             debug_code <= 3'd1;        // CPU zapisuje do registru
             debug_hold_counter <= 22'h3fffff;
