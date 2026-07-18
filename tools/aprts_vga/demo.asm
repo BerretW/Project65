@@ -5,7 +5,7 @@
 ;   $CF02 = ADDR_H (A18..A16 v bitech 2..0, krok v bitech 7..4)
 ;   $CF03 = DATA
 ;   $CF04 = CTRL (bit7 splash, bit0 mode: 0=text, 1=bitmap)
-;   $CF05 = DEBUG (bit0 debug overlay enable)
+;   $CF05 = DEBUG/STATUS (write bit0 debug enable, read bit7 write busy)
 
 	.setcpu "65C02"
 
@@ -71,12 +71,21 @@ write_string:
 @loop:
 	lda (ZP_PTR_LO),y
 	beq @done
-	sta VGA_DATA
+	jsr vga_write_data
 	lda ZP_ATTR
-	sta VGA_DATA
+	jsr vga_write_data
 	iny
 	bne @loop
 @done:
+	rts
+
+vga_write_data:
+	pha
+@wait_ready:
+	lda VGA_DEBUG
+	bmi @wait_ready
+	pla
+	sta VGA_DATA
 	rts
 
 ; Nastavi VGA adresu s krokem +1
@@ -99,10 +108,10 @@ init_palette0:
 	ldx #$00
 @pal_loop:
 	lda palette0_data,x
-	sta VGA_DATA
+	jsr vga_write_data
 	inx
 	lda palette0_data,x
-	sta VGA_DATA
+	jsr vga_write_data
 	inx
 	cpx #32
 	bne @pal_loop
@@ -126,7 +135,7 @@ upload_font:
 	ldy #$00
 @byte_loop:
 	lda (ZP_PTR_LO),y
-	sta VGA_DATA
+	jsr vga_write_data
 	iny
 	bne @byte_loop
 
@@ -150,9 +159,9 @@ clear_text_screen:
 
 @cell_loop:
 	lda #$20              ; ' '
-	sta VGA_DATA
+	jsr vga_write_data
 	lda #$F1              ; bila na modrem pozadi
-	sta VGA_DATA
+	jsr vga_write_data
 
 	; 16bit dekrement counteru
 	lda ZP_COUNT_LO

@@ -86,6 +86,8 @@ module vga_demo (
     reg [7:0]  cpu_read_data;
     reg        palette_write_done_pulse = 0;
 
+    wire [7:0] status_reg = {cpu_write_pending, cpu_read_pending, 5'b00000, debug_ctrl_reg[0]};
+
     always @(posedge clk_25mhz) begin
         palette_write_done_pulse <= 1'b0;
 
@@ -132,7 +134,7 @@ module vga_demo (
     assign lv_data = (lv_cs == 1'b0 && lv_mem_r == 1'b0) ? 
                      ((lv_addr == 4'd3) ? cpu_read_data :
                       (lv_addr == 4'd4) ? ctrl_reg :
-                      (lv_addr == 4'd5) ? debug_ctrl_reg : 8'bz) : 8'bz;
+                      (lv_addr == 4'd5) ? status_reg : 8'bz) : 8'bz;
 
     // Pri zapisu do externi SRAM musi FPGA aktivne ridit datovou sbernici.
     // Bez tohoto tri-state driveru by zapisy do VRAM neprobehly.
