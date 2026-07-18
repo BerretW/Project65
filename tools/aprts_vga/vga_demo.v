@@ -35,7 +35,7 @@ module vga_demo (
     reg [7:0]  addr_m = 8'h00;
     reg [7:0]  addr_h = 8'h00; 
     reg [7:0]  ctrl_reg = 8'h80; // [7] = Splash screen, [3:1] = Volba palety, [0] = Režim (0 = Text, 1 = Bitmapa)
-    reg [7:0]  debug_ctrl_reg = 8'h00; // [0] = Debug overlay enable
+    reg [7:0]  debug_ctrl_reg = 8'h01; // [0] = Debug overlay enable, default on
     
     wire [18:0] current_vram_addr = {addr_h[2:0], addr_m, addr_l};
     wire [3:0]  step_sel = addr_h[7:4];
@@ -59,15 +59,22 @@ module vga_demo (
 
     // Synchronizace signálů z CPU
     reg [1:0] sync_cs, sync_r, sync_w;
-    reg [3:0] sync_reg_addr;
-    reg [7:0] sync_cpu_data_out;
+    reg [3:0] cpu_write_addr;
+    reg [7:0] cpu_write_bus_data;
+    reg [3:0] cpu_read_addr;
     
     always @(posedge clk_25mhz) begin
         sync_cs    <= {sync_cs[0],    lv_cs};
         sync_r     <= {sync_r[0],     lv_mem_r};
         sync_w     <= {sync_w[0],     lv_mem_w};
-        sync_reg_addr <= lv_addr;
-        sync_cpu_data_out <= lv_data;
+
+        if (lv_cs == 1'b0 && lv_mem_w == 1'b0) begin
+            cpu_write_addr     <= lv_addr;
+            cpu_write_bus_data <= lv_data;
+        end
+        if (lv_cs == 1'b0 && lv_mem_r == 1'b0) begin
+            cpu_read_addr <= lv_addr;
+        end
     end
 
     wire reg_write_pulse = (sync_cs[1] == 1'b0 && sync_w[1] == 1'b0 && sync_w[0] == 1'b1);
@@ -83,32 +90,32 @@ module vga_demo (
         palette_write_done_pulse <= 1'b0;
 
         if (reg_write_pulse) begin
-            case (sync_reg_addr)
-                4'd0: addr_l <= sync_cpu_data_out;
-                4'd1: addr_m <= sync_cpu_data_out;
-                4'd2: addr_h <= sync_cpu_data_out;
+            case (cpu_write_addr)
+                4'd0: addr_l <= cpu_write_bus_data;
+                4'd1: addr_m <= cpu_write_bus_data;
+                4'd2: addr_h <= cpu_write_bus_data;
                 4'd3: begin
                     ctrl_reg[7] <= 1'b0; // První zápis do paměti vypne BIST
                     if (is_palette_addr) begin
                         if (current_vram_addr[0] == 1'b0) begin
-                            palette_ram_low[current_vram_addr[8:1]] <= sync_cpu_data_out;
+                            palette_ram_low[current_vram_addr[8:1]] <= cpu_write_bus_data;
                         end else begin
-                            palette_ram_high[current_vram_addr[8:1]] <= sync_cpu_data_out[3:0];
+                            palette_ram_high[current_vram_addr[8:1]] <= cpu_write_bus_data[3:0];
                         end
                         palette_write_done_pulse <= 1'b1;
                     end else begin
-                        cpu_write_data    <= sync_cpu_data_out;
+                        cpu_write_data    <= cpu_write_bus_data;
                         cpu_write_pending <= 1; 
                     end
                 end
                 4'd4: begin
-                    ctrl_reg <= sync_cpu_data_out;
+                    ctrl_reg <= cpu_write_bus_data;
                 end
                 4'd5: begin
-                    debug_ctrl_reg <= sync_cpu_data_out;
+                    debug_ctrl_reg <= cpu_write_bus_data;
                 end
             endcase
-        end else if (reg_read_pulse && sync_reg_addr == 4'd3) begin
+        end else if (reg_read_pulse && cpu_read_addr == 4'd3) begin
             cpu_read_pending <= 1; 
         end
 
@@ -309,7 +316,7 @@ module vga_demo (
     reg [2:0] debug_r, debug_g, debug_b;
 
     wire debug_overlay_on = debug_ctrl_reg[0] &&
-                            display_on_reg &&
+                            display_on_node &&
                             h_cnt >= 10'd608 && h_cnt < 10'd632 &&
                             v_cnt >= 10'd8 && v_cnt < 10'd32;
 
@@ -334,10 +341,8 @@ module vga_demo (
             debug_hold_counter <= 22'h3fffff;
         end else if (debug_hold_counter != 22'd0) begin
             debug_hold_counter <= debug_hold_counter - 1'b1;
-        end else if (sram_ce_n == 1'b0 && sram_oe_n == 1'b0) begin
-            debug_code <= 3'd6;        // Video fetch / prace se SRAM
         end else begin
-            debug_code <= 3'd0;
+            debug_code <= 3'd6;        // Debug on, video generator idle/fetch baseline
         end
     end
 
