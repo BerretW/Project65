@@ -60,19 +60,17 @@ module aprts_vga (
         endcase
     end
 
-    // CPU bus is valid while PHI2 is high. Use raw R/W for cycle direction and
-    // latch write data at the end of the PHI2-high write window.
+    // CPU bus is valid while PHI2 is high. Sample write data during the high
+    // window and commit it after a synchronized PHI2 falling edge.
     reg        reg_write_pulse = 1'b0;
     reg        reg_read_pulse  = 1'b0;
     reg [3:0] cpu_write_addr;
     reg [7:0] cpu_write_bus_data;
     reg [3:0] cpu_read_addr;
-    reg [3:0] cpu_write_addr_async = 4'd0;
-    reg [7:0] cpu_write_bus_data_async = 8'h00;
-    reg       cpu_write_selected_async = 1'b0;
-    reg       cpu_write_toggle = 1'b0;
-    reg [2:0] cpu_write_toggle_sync = 3'b000;
     reg [2:0] phi2_sync = 3'b000;
+    reg       cpu_write_seen_clk = 1'b0;
+    reg [3:0] cpu_write_addr_clk = 4'd0;
+    reg [7:0] cpu_write_bus_data_clk = 8'h00;
     reg       cpu_read_seen = 1'b0;
     reg       cpu_read_drive = 1'b0;
     reg [3:0] debug_last_write_addr = 4'd0;
@@ -80,31 +78,26 @@ module aprts_vga (
     reg [7:0] debug_write_count = 8'h00;
     wire      phi2_sample_window = phi2_sync[1];
 
-    always @(posedge phi2) begin
-        cpu_write_selected_async <= (lv_cs == 1'b0 && cpu_rw == 1'b0);
-        cpu_write_addr_async <= lv_addr;
-    end
-
-    always @(negedge phi2) begin
-        if (cpu_write_selected_async) begin
-            cpu_write_bus_data_async <= lv_data;
-            cpu_write_toggle <= ~cpu_write_toggle;
-        end
-    end
-    
     always @(posedge clk_25mhz) begin
         reg_write_pulse <= 1'b0;
         reg_read_pulse  <= 1'b0;
         phi2_sync <= {phi2_sync[1:0], phi2};
-        cpu_write_toggle_sync <= {cpu_write_toggle_sync[1:0], cpu_write_toggle};
+        if (phi2_sync[1] && lv_cs == 1'b0 && cpu_rw == 1'b0) begin
+            cpu_write_seen_clk <= 1'b1;
+            cpu_write_addr_clk <= lv_addr;
+            cpu_write_bus_data_clk <= lv_data;
+        end
 
-        if (cpu_write_toggle_sync[2] != cpu_write_toggle_sync[1]) begin
-            cpu_write_addr <= cpu_write_addr_async;
-            cpu_write_bus_data <= cpu_write_bus_data_async;
-            debug_last_write_addr <= cpu_write_addr_async;
-            debug_last_write_data <= cpu_write_bus_data_async;
-            debug_write_count <= debug_write_count + 1'b1;
-            reg_write_pulse <= 1'b1;
+        if (phi2_sync[2:1] == 2'b10) begin
+            if (cpu_write_seen_clk) begin
+                cpu_write_addr <= cpu_write_addr_clk;
+                cpu_write_bus_data <= cpu_write_bus_data_clk;
+                debug_last_write_addr <= cpu_write_addr_clk;
+                debug_last_write_data <= cpu_write_bus_data_clk;
+                debug_write_count <= debug_write_count + 1'b1;
+                reg_write_pulse <= 1'b1;
+            end
+            cpu_write_seen_clk <= 1'b0;
         end
 
         if (!phi2_sample_window) begin
@@ -169,7 +162,7 @@ module aprts_vga (
                     end
                 end
             endcase
-        end else if (reg_read_pulse && cpu_read_addr == 4'd3) begin
+        end else if (reg_read_pulse && cpu_read_addr == 4'd3 && !is_palette_addr) begin
             cpu_read_pending <= 1; 
         end
 
@@ -180,22 +173,26 @@ module aprts_vga (
         if (cpu_read_done) begin
             cpu_read_pending <= 0;
             {addr_h[2:0], addr_m, addr_l} <= current_vram_addr + step_value;
+        end else if (cpu_read_pending && is_palette_addr) begin
+            cpu_read_pending <= 0;
         end
     end
 
-    assign lv_data = (phi2 == 1'b1 && cpu_read_drive && cpu_rw == 1'b1) ?
-                     ((cpu_read_addr == 4'd3) ? cpu_read_data :
-                      (cpu_read_addr == 4'd4) ? ctrl_reg :
-                      (cpu_read_addr == 4'd5) ? status_reg :
-                      (cpu_read_addr == 4'd6) ? sram_diag_fail_addr[7:0] :
-                      (cpu_read_addr == 4'd7) ? sram_diag_fail_addr[15:8] :
-                      (cpu_read_addr == 4'd8) ? {5'b00000, sram_diag_fail_addr[18:16]} :
-                      (cpu_read_addr == 4'd9) ? sram_diag_fail_expected :
-                      (cpu_read_addr == 4'd10) ? sram_diag_fail_actual :
-                      (cpu_read_addr == 4'd11) ? {4'b0000, sram_diag_state} :
-                      (cpu_read_addr == 4'd12) ? {4'b0000, debug_last_write_addr} :
-                      (cpu_read_addr == 4'd13) ? debug_last_write_data :
-                      (cpu_read_addr == 4'd14) ? debug_write_count : 8'bz) : 8'bz;
+    wire [7:0] cpu_read_mux =
+        (lv_addr == 4'd3)  ? cpu_read_data :
+        (lv_addr == 4'd4)  ? ctrl_reg :
+        (lv_addr == 4'd5)  ? status_reg :
+        (lv_addr == 4'd6)  ? sram_diag_fail_addr[7:0] :
+        (lv_addr == 4'd7)  ? sram_diag_fail_addr[15:8] :
+        (lv_addr == 4'd8)  ? {5'b00000, sram_diag_fail_addr[18:16]} :
+        (lv_addr == 4'd9)  ? sram_diag_fail_expected :
+        (lv_addr == 4'd10) ? sram_diag_fail_actual :
+        (lv_addr == 4'd11) ? {4'b0000, sram_diag_state} :
+        (lv_addr == 4'd12) ? {4'b0000, debug_last_write_addr} :
+        (lv_addr == 4'd13) ? debug_last_write_data :
+        (lv_addr == 4'd14) ? debug_write_count : 8'h00;
+
+    assign lv_data = (phi2 == 1'b1 && lv_cs == 1'b0 && cpu_rw == 1'b1) ? cpu_read_mux : 8'bz;
 
     // Pri zapisu do externi SRAM musi FPGA aktivne ridit datovou sbernici.
     // Bez tohoto tri-state driveru by zapisy do VRAM neprobehly.

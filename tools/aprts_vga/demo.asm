@@ -6,7 +6,7 @@
 ;
 ; Nacteni v AppartusOS:
 ;   LOAD              ; posli demo.hex pres serial
-;   SAVE VGADEMO 3100 05B3
+;   SAVE VGADEMO 3100 074B
 ;   RUN VGADEMO
 
 ROM_PUTC    = $FF09
@@ -49,34 +49,15 @@ start:
 	LDX #>msg_start
 	JSR ROM_PRINTNL
 
-	JSR print_status_initial
-
+	LDA #<msg_blind_mode
+	LDX #>msg_blind_mode
+	JSR ROM_PRINTNL
 	LDA #<msg_wait_diag
 	LDX #>msg_wait_diag
 	JSR ROM_PRINTNL
-	LDA #STATUS_DIAG_BUSY
-	JSR wait_status_clear
-	BCC diag_ready
-	LDA #<msg_timeout_diag
-	LDX #>msg_timeout_diag
-	JSR ROM_PRINTNL
-	JSR print_status_final
-	RTS
-
-diag_ready:
-	JSR print_status_diag
-	LDA VGA_STATUS
-	AND #STATUS_DIAG_ERROR
-	BEQ diag_ok
-	LDA #<msg_diag_error
-	LDX #>msg_diag_error
-	JSR ROM_PRINTNL
-	JSR print_diag_fail
-	RTS
-
-diag_ok:
-	LDA #<msg_diag_ok
-	LDX #>msg_diag_ok
+	JSR delay_long
+	LDA #<msg_diag_skip
+	LDX #>msg_diag_skip
 	JSR ROM_PRINTNL
 
 	LDA #<msg_clear
@@ -84,47 +65,61 @@ diag_ok:
 	JSR ROM_PRINTNL
 	LDA #$03                ; debug overlay on + SRAM clear request toggle
 	STA VGA_STATUS
+	JSR delay_local
 	LDA #$01                ; debug overlay on, clear request bit zpet na 0
 	STA VGA_STATUS
-	LDA #STATUS_CLEAR_ACTIVE
-	JSR wait_status_set
-	LDA #STATUS_CLEAR_ACTIVE
-	JSR wait_status_clear
-	BCC clear_done
-	LDA #<msg_timeout_clear
-	LDX #>msg_timeout_clear
-	JSR ROM_PRINTNL
-	JSR print_status_final
-	RTS
-
-clear_done:
-	JSR print_status_clear
+	JSR delay_long
 
 	LDA #<msg_palette
 	LDX #>msg_palette
 	JSR ROM_PRINTNL
-	JSR init_palette_trace
-	JSR print_status_palette
+	JSR init_palette
 
 	LDA #<msg_first_bitmap
 	LDX #>msg_first_bitmap
 	JSR ROM_PRINTNL
-	JSR first_bitmap_byte_test
-	JSR print_debug_write_regs
-	JSR print_status_bitmap_first
+	LDA #<msg_first_setaddr
+	LDX #>msg_first_setaddr
+	JSR ROM_PRINTNL
+	JSR set_addr_00000
+	LDA #<msg_first_addr_done
+	LDX #>msg_first_addr_done
+	JSR ROM_PRINTNL
+	LDA #<msg_first_data_write
+	LDX #>msg_first_data_write
+	JSR ROM_PRINTNL
+	LDA #$0F
+	STA VGA_DATA
+	LDA #<msg_first_data_done
+	LDX #>msg_first_data_done
+	JSR ROM_PRINTNL
+	JSR delay_local
+	LDA #<msg_first_write_ok
+	LDX #>msg_first_write_ok
+	JSR ROM_PRINTNL
 
 	LDA #<msg_bitmap
 	LDX #>msg_bitmap
 	JSR ROM_PRINTNL
 	JSR draw_bitmap
-	JSR print_status_bitmap
+	LDA #<msg_bitmap_done
+	LDX #>msg_bitmap_done
+	JSR ROM_PRINTNL
 
+	LDA #<msg_bitmap_mode
+	LDX #>msg_bitmap_mode
+	JSR ROM_PRINTNL
 	LDA #$01                ; bitmap mode, palette 0, splash off
 	STA VGA_CTRL
-	LDA #$01                ; automatic debug overlay on
+	LDA #<msg_ctrl_written
+	LDX #>msg_ctrl_written
+	JSR ROM_PRINTNL
+	LDA #$00                ; debug overlay off, show framebuffer only
 	STA VGA_STATUS
+	LDA #<msg_status_written
+	LDX #>msg_status_written
+	JSR ROM_PRINTNL
 
-	JSR print_status_final
 	LDA #<msg_done
 	LDX #>msg_done
 	JSR ROM_PRINTNL
@@ -167,10 +162,18 @@ write_vga_sram:
 	RTS
 
 delay_local:
-	LDX #$40
+	LDX #$FF
 delay_local_loop:
 	DEX
 	BNE delay_local_loop
+	RTS
+
+delay_long:
+	LDY #$40
+delay_long_outer:
+	JSR delay_local
+	DEY
+	BNE delay_long_outer
 	RTS
 
 wait_status_clear:
@@ -213,12 +216,15 @@ wait_status_set_ok:
 
 init_palette:
 	JSR set_addr_palette
-	LDY #$00
+	LDA #$00
+	STA pal_index
 palette_loop:
+	LDY pal_index
 	LDA palette_rgb444,Y
 	JSR write_vga_palette
-	INY
-	CPY #palette_rgb444_end - palette_rgb444
+	INC pal_index
+	LDA pal_index
+	CMP #palette_rgb444_end - palette_rgb444
 	BNE palette_loop
 	RTS
 
@@ -260,17 +266,35 @@ palette_trace_loop:
 	RTS
 
 first_bitmap_byte_test:
+	LDA #<msg_first_setaddr
+	LDX #>msg_first_setaddr
+	JSR ROM_PRINTNL
 	JSR set_addr_00000
+	LDA #<msg_first_addr_done
+	LDX #>msg_first_addr_done
+	JSR ROM_PRINTNL
 	LDA #$0F
-	JSR write_vga_sram
+	LDA #<msg_first_data_write
+	LDX #>msg_first_data_write
+	JSR ROM_PRINTNL
+	LDA #$0F
+	STA VGA_DATA
+	LDA #<msg_first_data_done
+	LDX #>msg_first_data_done
+	JSR ROM_PRINTNL
+	JSR delay_local
+first_bitmap_done:
+	CLC
 	RTS
 
 draw_bitmap:
 	JSR set_addr_00000
 	LDA #$00
 	STA bytes_left
-	LDA #$10                ; 4096 B bitmap block
-	STA bytes_left+1
+	LDA #$01                ; diagnostic: only 256 B, full framebuffer is $12C00
+	STA pages_left
+	LDA #$00
+	STA pages_left+1
 	LDA #$01
 	STA color_value
 draw_bitmap_loop:
@@ -285,8 +309,10 @@ draw_bitmap_loop:
 draw_bitmap_color_ok:
 	DEC bytes_left
 	BNE draw_bitmap_loop
-	DEC bytes_left+1
+	DEC pages_left
 	BNE draw_bitmap_loop
+	DEC pages_left+1
+	BPL draw_bitmap_loop
 	RTS
 
 sram_rw_test:
@@ -342,6 +368,15 @@ print_status:
 	JSR ROM_PUTNL
 	RTS
 
+print_ctrl_after_mode:
+	LDA #<msg_ctrl_after_mode
+	LDX #>msg_ctrl_after_mode
+	JSR ROM_PUTS
+	LDA VGA_CTRL
+	JSR ROM_PRTBYTE
+	JSR ROM_PUTNL
+	RTS
+
 print_debug_write_regs:
 	LDA #<msg_dbg_write
 	LDX #>msg_dbg_write
@@ -393,11 +428,14 @@ wait_mask:   .byte 0
 timeout_lo:  .byte 0
 timeout_hi:  .byte 0
 bytes_left:  .word 0
+pages_left:  .word 0
 color_value: .byte 0
 pal_index:   .byte 0
 
 msg_start:          .byte "APRTS VGA test start, FPGA base $CF00", 0
+msg_blind_mode:     .byte "Blind write-only run: no FPGA reads", 0
 msg_wait_diag:      .byte "Waiting for FPGA SRAM diagnostic...", 0
+msg_diag_skip:      .byte "Diagnostic wait elapsed", 0
 msg_timeout_diag:   .byte "TIMEOUT: diagnostic busy bit stayed set", 0
 msg_diag_error:     .byte "ERROR: FPGA SRAM diagnostic failed", 0
 msg_diag_ok:        .byte "FPGA SRAM diagnostic OK", 0
@@ -410,9 +448,20 @@ msg_palette_zero:   .byte "Writing one palette zero byte", 0
 msg_palette_zero_ok:.byte "One palette zero byte written", 0
 msg_font:           .byte "Uploading 2 KB font to $03000", 0
 msg_first_bitmap:   .byte "Writing first bitmap byte", 0
-msg_bitmap:         .byte "Writing 4 KB bitmap block to VRAM", 0
+msg_first_setaddr:  .byte "First byte: set addr", 0
+msg_first_addr_done:.byte "First byte: addr done", 0
+msg_first_data_write:.byte "First byte: write DATA", 0
+msg_first_data_done:.byte "First byte: DATA done", 0
+msg_first_write_ok: .byte "First byte write-only path OK", 0
+msg_timeout_write:  .byte "TIMEOUT: first SRAM write pending", 0
+msg_bitmap_mode:    .byte "Switching to bitmap mode", 0
+msg_ctrl_written:   .byte "CTRL write done", 0
+msg_status_written: .byte "STATUS write done", 0
+msg_bitmap:         .byte "Writing 256 B bitmap probe to VRAM", 0
+msg_bitmap_done:    .byte "Bitmap probe write done", 0
 msg_done:           .byte "APRTS VGA test done, returning to shell", 0
 msg_dbg_write:      .byte "DBG last/count=$", 0
+msg_ctrl_after_mode:.byte "CTRL after bitmap mode=$", 0
 
 msg_status_initial: .byte "STATUS initial=$", 0
 msg_status_diag:    .byte "STATUS after diag=$", 0
