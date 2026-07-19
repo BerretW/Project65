@@ -6,7 +6,7 @@
 ;
 ; Nacteni v AppartusOS:
 ;   LOAD              ; posli demo.hex pres serial
-;   SAVE VGADEMO 3100 0780
+;   SAVE VGADEMO 3100 0856
 ;   RUN VGADEMO
 
 ROM_PUTC    = $FF09
@@ -32,6 +32,11 @@ VGA_DBG_LAST_ADDR = VGA_BASE + 12
 VGA_DBG_LAST_DATA = VGA_BASE + 13
 VGA_DBG_WR_COUNT  = VGA_BASE + 14
 
+VIA1_BASE   = $CC00
+VIA1_T1C_H  = VIA1_BASE + 5
+VIA1_IFR    = VIA1_BASE + 13
+VIA1_IER    = VIA1_BASE + 14
+
 STATUS_WRITE_PENDING = $80
 STATUS_READ_PENDING  = $40
 STATUS_CLEAR_ACTIVE  = $20
@@ -46,6 +51,7 @@ text_ptr = $22
 
 start:
 	SEI
+	JSR disable_nmi_timer
 	LDA #<msg_start
 	LDX #>msg_start
 	JSR ROM_PRINTNL
@@ -107,19 +113,24 @@ start:
 	LDX #>msg_bitmap_done
 	JSR ROM_PRINTNL
 
-	LDA #<msg_bitmap_mode
-	LDX #>msg_bitmap_mode
-	JSR ROM_PRINTNL
 	LDA #$01                ; bitmap mode, palette 0, splash off
 	STA VGA_CTRL
-	LDA #<msg_ctrl_written
-	LDX #>msg_ctrl_written
-	JSR ROM_PRINTNL
-
-	LDA #<msg_done
-	LDX #>msg_done
-	JSR ROM_PRINTNL
+	JSR delay_long
+	JSR restore_nmi_timer
 	CLI
+	RTS
+
+disable_nmi_timer:
+	LDA #$40                ; IER bit7=0 clears Timer1 enable
+	STA VIA1_IER
+	STA VIA1_IFR            ; clear pending Timer1 flag
+	RTS
+
+restore_nmi_timer:
+	LDA #$4D
+	STA VIA1_T1C_H
+	LDA #$C0                ; IER bit7=1 enables Timer1
+	STA VIA1_IER
 	RTS
 
 set_addr_00000:
@@ -160,13 +171,14 @@ set_addr_page:
 	RTS
 
 write_vga_palette:
+	JSR delay_long
 	STA VGA_DATA
-	JSR delay_local
+	JSR delay_long
 	RTS
 
 write_vga_sram:
 	STA VGA_DATA
-	JSR delay_local
+	JSR delay_long
 	RTS
 
 delay_local:
@@ -223,13 +235,32 @@ wait_status_set_ok:
 	RTS
 
 init_palette:
+	LDA #<msg_palette_setaddr
+	LDX #>msg_palette_setaddr
+	JSR ROM_PRINTNL
 	JSR set_addr_palette
-	LDA palette_rgb444
+	LDA #<msg_palette_addr_done
+	LDX #>msg_palette_addr_done
+	JSR ROM_PRINTNL
+	LDA #<msg_palette_slow_write
+	LDX #>msg_palette_slow_write
+	JSR ROM_PRINTNL
+	LDA #$00
+	STA pal_index
+palette_slow_loop:
+	LDA #'>'
+	JSR ROM_PUTC
+	LDY pal_index
+	LDA palette_rgb444,Y
 	JSR write_vga_palette
+	LDA #'<'
+	JSR ROM_PUTC
 	JSR delay_long
-	LDA palette_rgb444+1
-	JSR write_vga_palette
-	JSR delay_long
+	INC pal_index
+	LDA pal_index
+	CMP #palette_rgb444_end - palette_rgb444
+	BNE palette_slow_loop
+	JSR ROM_PUTNL
 	RTS
 
 palette_zero_test:
@@ -292,24 +323,32 @@ first_bitmap_done:
 	RTS
 
 draw_bitmap:
-	LDA #$10                ; diagnostic: 16 blocks * 16 B = 256 B
+	LDA #$01                ; diagnostic: 1 block * 8 B = 8 B
 	STA pages_left
 	LDA #$00
 	STA page_index
 	LDA #$01
 	STA color_value
 draw_bitmap_block_loop:
+	LDA #'A'
+	JSR ROM_PUTC
 	LDA page_index
 	STA VGA_ADDR_L
 	LDA #$00
 	STA VGA_ADDR_M
 	LDA #$10                ; step 1, addr[18:16] = 0
 	STA VGA_ADDR_H
-	LDA #$10
+	LDA #'a'
+	JSR ROM_PUTC
+	LDA #$08
 	STA bytes_left
 draw_bitmap_byte_loop:
+	LDA #'D'
+	JSR ROM_PUTC
 	LDA color_value
 	JSR write_vga_sram
+	LDA #'d'
+	JSR ROM_PUTC
 	INC color_value
 	LDA color_value
 	AND #$0F
@@ -459,6 +498,13 @@ msg_sram_probe:     .byte "Writing one SRAM probe byte at $00000", 0
 msg_probe_status:   .byte "STATUS after SRAM probe=$", 0
 msg_palette:        .byte "Uploading palette RAM", 0
 msg_palette_done:   .byte "Palette probe done", 0
+msg_palette_setaddr:.byte "Palette: set addr", 0
+msg_palette_addr_done:.byte "Palette: addr done", 0
+msg_palette_slow_write:.byte "Palette: slow write 16 colors", 0
+msg_palette_low_write:.byte "Palette: write low", 0
+msg_palette_low_done:.byte "Palette: low done", 0
+msg_palette_high_write:.byte "Palette: write high", 0
+msg_palette_high_done:.byte "Palette: high done", 0
 msg_palette_zero:   .byte "Writing one palette zero byte", 0
 msg_palette_zero_ok:.byte "One palette zero byte written", 0
 msg_font:           .byte "Uploading 2 KB font to $03000", 0
@@ -472,7 +518,7 @@ msg_timeout_write:  .byte "TIMEOUT: first SRAM write pending", 0
 msg_bitmap_mode:    .byte "Switching to bitmap mode", 0
 msg_ctrl_written:   .byte "CTRL write done", 0
 msg_status_written: .byte "STATUS write done", 0
-msg_bitmap:         .byte "Writing 256 B bitmap probe as 16 B blocks", 0
+msg_bitmap:         .byte "Writing 8 B bitmap probe as slow bytes", 0
 msg_bitmap_done:    .byte "Bitmap probe write done", 0
 msg_done:           .byte "APRTS VGA test done, returning to shell", 0
 msg_dbg_write:      .byte "DBG last/count=$", 0
