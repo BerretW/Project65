@@ -1,5 +1,6 @@
-module vga_demo (
+module aprts_vga (
     input  wire        clk_25mhz, // Vstupní hodinový signál 25 MHz
+    input  wire        phi2,      // 6502 PHI2: platné okno CPU sběrnice
     
     // VGA rozhraní (9-bit DAC)
     output reg  [2:0]  red,       
@@ -18,7 +19,7 @@ module vga_demo (
     // 6502 CPU Interface (VERA-style registry)
     input  wire        lv_cs,     // Aktivní v nule (Chip Select)
     input  wire        lv_mem_r,  // Aktivní v nule (Read Enable)
-    input  wire        lv_mem_w,  // Aktivní v nule (Write Enable)
+    input  wire        cpu_rw,    // Raw 6502 R/W: 1 = read, 0 = write
     input  wire [3:0]  lv_addr,   // Adresní piny registrů (A0-A3)
     inout  wire [7:0]  lv_data    // Obousměrná datová sběrnice k CPU
 );
@@ -59,28 +60,67 @@ module vga_demo (
         endcase
     end
 
-    // Synchronizace signálů z CPU
-    reg [1:0] sync_cs = 2'b11, sync_r = 2'b11, sync_w = 2'b11;
+    // CPU bus is valid while PHI2 is high. Use raw R/W for cycle direction and
+    // latch write data at the end of the PHI2-high write window.
+    reg        reg_write_pulse = 1'b0;
+    reg        reg_read_pulse  = 1'b0;
     reg [3:0] cpu_write_addr;
     reg [7:0] cpu_write_bus_data;
     reg [3:0] cpu_read_addr;
-    
-    always @(posedge clk_25mhz) begin
-        sync_cs    <= {sync_cs[0],    lv_cs};
-        sync_r     <= {sync_r[0],     lv_mem_r};
-        sync_w     <= {sync_w[0],     lv_mem_w};
+    reg [3:0] cpu_write_addr_async = 4'd0;
+    reg [7:0] cpu_write_bus_data_async = 8'h00;
+    reg       cpu_write_selected_async = 1'b0;
+    reg       cpu_write_toggle = 1'b0;
+    reg [2:0] cpu_write_toggle_sync = 3'b000;
+    reg [2:0] phi2_sync = 3'b000;
+    reg       cpu_read_seen = 1'b0;
+    reg       cpu_read_drive = 1'b0;
+    reg [3:0] debug_last_write_addr = 4'd0;
+    reg [7:0] debug_last_write_data = 8'h00;
+    reg [7:0] debug_write_count = 8'h00;
+    wire      phi2_sample_window = phi2_sync[1];
 
-        if (lv_cs == 1'b0 && lv_mem_w == 1'b0) begin
-            cpu_write_addr     <= lv_addr;
-            cpu_write_bus_data <= lv_data;
-        end
-        if (lv_cs == 1'b0 && lv_mem_r == 1'b0) begin
-            cpu_read_addr <= lv_addr;
-        end
+    always @(posedge phi2) begin
+        cpu_write_selected_async <= (lv_cs == 1'b0 && cpu_rw == 1'b0);
+        cpu_write_addr_async <= lv_addr;
     end
 
-    wire reg_write_pulse = (sync_cs[1] == 1'b0 && sync_w[1] == 1'b0 && sync_w[0] == 1'b1);
-    wire reg_read_pulse  = (sync_cs[1] == 1'b0 && sync_r[1] == 1'b0 && sync_r[0] == 1'b1);
+    always @(negedge phi2) begin
+        if (cpu_write_selected_async) begin
+            cpu_write_bus_data_async <= lv_data;
+            cpu_write_toggle <= ~cpu_write_toggle;
+        end
+    end
+    
+    always @(posedge clk_25mhz) begin
+        reg_write_pulse <= 1'b0;
+        reg_read_pulse  <= 1'b0;
+        phi2_sync <= {phi2_sync[1:0], phi2};
+        cpu_write_toggle_sync <= {cpu_write_toggle_sync[1:0], cpu_write_toggle};
+
+        if (cpu_write_toggle_sync[2] != cpu_write_toggle_sync[1]) begin
+            cpu_write_addr <= cpu_write_addr_async;
+            cpu_write_bus_data <= cpu_write_bus_data_async;
+            debug_last_write_addr <= cpu_write_addr_async;
+            debug_last_write_data <= cpu_write_bus_data_async;
+            debug_write_count <= debug_write_count + 1'b1;
+            reg_write_pulse <= 1'b1;
+        end
+
+        if (!phi2_sample_window) begin
+            cpu_read_seen <= 1'b0;
+            cpu_read_drive <= 1'b0;
+        end else begin
+            if (lv_cs == 1'b0 && cpu_rw == 1'b1 && !cpu_read_seen) begin
+                cpu_read_addr <= lv_addr;
+                cpu_read_seen <= 1'b1;
+                cpu_read_drive <= 1'b1;
+                reg_read_pulse <= 1'b1;
+            end else if (lv_cs == 1'b1 || cpu_rw == 1'b0) begin
+                cpu_read_drive <= 1'b0;
+            end
+        end
+    end
 
     reg        cpu_write_pending = 0;
     reg        cpu_read_pending  = 0;
@@ -143,7 +183,7 @@ module vga_demo (
         end
     end
 
-    assign lv_data = (lv_cs == 1'b0 && lv_mem_r == 1'b0) ? 
+    assign lv_data = (phi2 == 1'b1 && cpu_read_drive && cpu_rw == 1'b1) ?
                      ((cpu_read_addr == 4'd3) ? cpu_read_data :
                       (cpu_read_addr == 4'd4) ? ctrl_reg :
                       (cpu_read_addr == 4'd5) ? status_reg :
@@ -152,7 +192,10 @@ module vga_demo (
                       (cpu_read_addr == 4'd8) ? {5'b00000, sram_diag_fail_addr[18:16]} :
                       (cpu_read_addr == 4'd9) ? sram_diag_fail_expected :
                       (cpu_read_addr == 4'd10) ? sram_diag_fail_actual :
-                      (cpu_read_addr == 4'd11) ? {4'b0000, sram_diag_state} : 8'bz) : 8'bz;
+                      (cpu_read_addr == 4'd11) ? {4'b0000, sram_diag_state} :
+                      (cpu_read_addr == 4'd12) ? {4'b0000, debug_last_write_addr} :
+                      (cpu_read_addr == 4'd13) ? debug_last_write_data :
+                      (cpu_read_addr == 4'd14) ? debug_write_count : 8'bz) : 8'bz;
 
     // Pri zapisu do externi SRAM musi FPGA aktivne ridit datovou sbernici.
     // Bez tohoto tri-state driveru by zapisy do VRAM neprobehly.
