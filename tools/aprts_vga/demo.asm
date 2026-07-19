@@ -6,7 +6,7 @@
 ;
 ; Nacteni v AppartusOS:
 ;   LOAD              ; posli demo.hex pres serial
-;   SAVE VGADEMO 3100 0778
+;   SAVE VGADEMO 3100 0780
 ;   RUN VGADEMO
 
 ROM_PUTC    = $FF09
@@ -72,6 +72,9 @@ start:
 	LDX #>msg_palette
 	JSR ROM_PRINTNL
 	JSR init_palette
+	LDA #<msg_palette_done
+	LDX #>msg_palette_done
+	JSR ROM_PRINTNL
 
 	LDA #<msg_first_bitmap
 	LDX #>msg_first_bitmap
@@ -221,16 +224,12 @@ wait_status_set_ok:
 
 init_palette:
 	JSR set_addr_palette
-	LDA #$00
-	STA pal_index
-palette_loop:
-	LDY pal_index
-	LDA palette_rgb444,Y
+	LDA palette_rgb444
 	JSR write_vga_palette
-	INC pal_index
-	LDA pal_index
-	CMP #palette_rgb444_end - palette_rgb444
-	BNE palette_loop
+	JSR delay_long
+	LDA palette_rgb444+1
+	JSR write_vga_palette
+	JSR delay_long
 	RTS
 
 palette_zero_test:
@@ -459,6 +458,7 @@ msg_timeout_clear:  .byte "TIMEOUT: SRAM clear active bit stayed set", 0
 msg_sram_probe:     .byte "Writing one SRAM probe byte at $00000", 0
 msg_probe_status:   .byte "STATUS after SRAM probe=$", 0
 msg_palette:        .byte "Uploading palette RAM", 0
+msg_palette_done:   .byte "Palette probe done", 0
 msg_palette_zero:   .byte "Writing one palette zero byte", 0
 msg_palette_zero_ok:.byte "One palette zero byte written", 0
 msg_font:           .byte "Uploading 2 KB font to $03000", 0
