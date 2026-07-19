@@ -6,7 +6,7 @@
 ;
 ; Nacteni v AppartusOS:
 ;   LOAD              ; posli demo.hex pres serial
-;   SAVE VGADEMO 3100 0856
+;   SAVE VGADEMO 3100 088E
 ;   RUN VGADEMO
 
 ROM_PUTC    = $FF09
@@ -108,7 +108,23 @@ start:
 	LDA #<msg_bitmap
 	LDX #>msg_bitmap
 	JSR ROM_PRINTNL
-	JSR draw_bitmap
+	JSR set_addr_00000
+	LDA #$01
+	JSR write_vga_sram_marked
+	LDA #$02
+	JSR write_vga_sram_marked
+	LDA #$03
+	JSR write_vga_sram_marked
+	LDA #$04
+	JSR write_vga_sram_marked
+	LDA #$05
+	JSR write_vga_sram_marked
+	LDA #$06
+	JSR write_vga_sram_marked
+	LDA #$07
+	JSR write_vga_sram_marked
+	LDA #$08
+	JSR write_vga_sram_marked
 	LDA #<msg_bitmap_done
 	LDX #>msg_bitmap_done
 	JSR ROM_PRINTNL
@@ -179,6 +195,16 @@ write_vga_palette:
 write_vga_sram:
 	STA VGA_DATA
 	JSR delay_long
+	RTS
+
+write_vga_sram_marked:
+	PHA
+	LDA #'D'
+	JSR ROM_PUTC
+	PLA
+	JSR write_vga_sram
+	LDA #'d'
+	JSR ROM_PUTC
 	RTS
 
 delay_local:
