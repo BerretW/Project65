@@ -6,7 +6,7 @@
 ;
 ; Nacteni v AppartusOS:
 ;   LOAD              ; posli demo.hex pres serial
-;   SAVE VGADEMO 3100 088E
+;   SAVE VGADEMO 3100 088B
 ;   RUN VGADEMO
 
 ROM_PUTC    = $FF09
@@ -108,7 +108,6 @@ start:
 	LDA #<msg_bitmap
 	LDX #>msg_bitmap
 	JSR ROM_PRINTNL
-	JSR set_addr_00000
 	LDA #$01
 	JSR write_vga_sram_marked
 	LDA #$02
