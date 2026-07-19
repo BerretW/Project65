@@ -6,7 +6,7 @@
 ;
 ; Nacteni v AppartusOS:
 ;   LOAD              ; posli demo.hex pres serial
-;   SAVE VGADEMO 3100 074B
+;   SAVE VGADEMO 3100 0778
 ;   RUN VGADEMO
 
 ROM_PUTC    = $FF09
@@ -45,6 +45,7 @@ text_ptr = $22
 .org $3100
 
 start:
+	SEI
 	LDA #<msg_start
 	LDX #>msg_start
 	JSR ROM_PRINTNL
@@ -63,10 +64,7 @@ start:
 	LDA #<msg_clear
 	LDX #>msg_clear
 	JSR ROM_PRINTNL
-	LDA #$03                ; debug overlay on + SRAM clear request toggle
-	STA VGA_STATUS
-	JSR delay_local
-	LDA #$01                ; debug overlay on, clear request bit zpet na 0
+	LDA #$01                ; debug overlay on, do not start SRAM clear in blind mode
 	STA VGA_STATUS
 	JSR delay_long
 
@@ -114,15 +112,11 @@ start:
 	LDA #<msg_ctrl_written
 	LDX #>msg_ctrl_written
 	JSR ROM_PRINTNL
-	LDA #$00                ; debug overlay off, show framebuffer only
-	STA VGA_STATUS
-	LDA #<msg_status_written
-	LDX #>msg_status_written
-	JSR ROM_PRINTNL
 
 	LDA #<msg_done
 	LDX #>msg_done
 	JSR ROM_PRINTNL
+	CLI
 	RTS
 
 set_addr_00000:
@@ -148,6 +142,17 @@ set_addr_palette:
 	LDA #$F0
 	STA VGA_ADDR_M
 	LDA #$11                ; $1F000, step 1
+	STA VGA_ADDR_H
+	RTS
+
+set_addr_page:
+	LDA #$00
+	STA VGA_ADDR_L
+	LDA page_index
+	STA VGA_ADDR_M
+	LDA page_index+1
+	AND #$07
+	ORA #$10                ; step 1, addr[18:16] from page_index high bits
 	STA VGA_ADDR_H
 	RTS
 
@@ -288,16 +293,22 @@ first_bitmap_done:
 	RTS
 
 draw_bitmap:
-	JSR set_addr_00000
-	LDA #$00
-	STA bytes_left
-	LDA #$01                ; diagnostic: only 256 B, full framebuffer is $12C00
+	LDA #$10                ; diagnostic: 16 blocks * 16 B = 256 B
 	STA pages_left
 	LDA #$00
-	STA pages_left+1
+	STA page_index
 	LDA #$01
 	STA color_value
-draw_bitmap_loop:
+draw_bitmap_block_loop:
+	LDA page_index
+	STA VGA_ADDR_L
+	LDA #$00
+	STA VGA_ADDR_M
+	LDA #$10                ; step 1, addr[18:16] = 0
+	STA VGA_ADDR_H
+	LDA #$10
+	STA bytes_left
+draw_bitmap_byte_loop:
 	LDA color_value
 	JSR write_vga_sram
 	INC color_value
@@ -308,11 +319,14 @@ draw_bitmap_loop:
 	STA color_value
 draw_bitmap_color_ok:
 	DEC bytes_left
-	BNE draw_bitmap_loop
+	BNE draw_bitmap_byte_loop
+	JSR delay_long
+	LDA page_index
+	CLC
+	ADC #$10
+	STA page_index
 	DEC pages_left
-	BNE draw_bitmap_loop
-	DEC pages_left+1
-	BPL draw_bitmap_loop
+	BNE draw_bitmap_block_loop
 	RTS
 
 sram_rw_test:
@@ -429,6 +443,7 @@ timeout_lo:  .byte 0
 timeout_hi:  .byte 0
 bytes_left:  .word 0
 pages_left:  .word 0
+page_index:  .word 0
 color_value: .byte 0
 pal_index:   .byte 0
 
@@ -457,7 +472,7 @@ msg_timeout_write:  .byte "TIMEOUT: first SRAM write pending", 0
 msg_bitmap_mode:    .byte "Switching to bitmap mode", 0
 msg_ctrl_written:   .byte "CTRL write done", 0
 msg_status_written: .byte "STATUS write done", 0
-msg_bitmap:         .byte "Writing 256 B bitmap probe to VRAM", 0
+msg_bitmap:         .byte "Writing 256 B bitmap probe as 16 B blocks", 0
 msg_bitmap_done:    .byte "Bitmap probe write done", 0
 msg_done:           .byte "APRTS VGA test done, returning to shell", 0
 msg_dbg_write:      .byte "DBG last/count=$", 0
@@ -478,7 +493,7 @@ msg_fail_state:     .byte "FAIL state=$", 0
 
 ; 16 barev RGB444, kazda jako low byte a high nibble pro VGA palette RAM.
 palette_rgb444:
-	.byte $00,$00, $0A,$00, $A0,$00, $AA,$00
+	.byte $FF,$0F, $0A,$00, $A0,$00, $AA,$00
 	.byte $00,$0A, $0A,$0A, $A0,$0A, $AA,$0A
 	.byte $55,$05, $0F,$00, $F0,$00, $FF,$00
 	.byte $00,$0F, $0F,$0F, $F0,$0F, $FF,$0F

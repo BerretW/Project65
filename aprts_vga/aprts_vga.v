@@ -148,8 +148,10 @@ module aprts_vga (
                         palette_write_done_pulse <= 1'b1;
                         {addr_h[2:0], addr_m, addr_l} <= current_vram_addr + step_value;
                     end else begin
-                        cpu_write_data    <= cpu_write_bus_data;
-                        cpu_write_pending <= 1; 
+                        if (!cpu_write_pending) begin
+                            cpu_write_data    <= cpu_write_bus_data;
+                            cpu_write_pending <= 1;
+                        end
                     end
                 end
                 4'd4: begin
