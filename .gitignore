@@ -5,4 +5,12 @@ target/
 *.o
 *.bin
 *.hex
+*.abs
+*.jed
+*.lst
+*.pla
+*.sim
+*.so
+*.wcp
+*.wo
 

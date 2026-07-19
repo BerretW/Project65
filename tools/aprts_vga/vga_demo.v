@@ -60,7 +60,7 @@ module vga_demo (
     end
 
     // Synchronizace signálů z CPU
-    reg [1:0] sync_cs, sync_r, sync_w;
+    reg [1:0] sync_cs = 2'b11, sync_r = 2'b11, sync_w = 2'b11;
     reg [3:0] cpu_write_addr;
     reg [7:0] cpu_write_bus_data;
     reg [3:0] cpu_read_addr;
@@ -87,6 +87,12 @@ module vga_demo (
     reg [7:0]  cpu_write_data;
     reg [7:0]  cpu_read_data;
     reg        palette_write_done_pulse = 0;
+    reg [1:0]  cpu_write_state = 2'd0;
+
+    localparam CPU_WRITE_IDLE  = 2'd0;
+    localparam CPU_WRITE_SETUP = 2'd1;
+    localparam CPU_WRITE_WE    = 2'd2;
+    localparam CPU_WRITE_HOLD  = 2'd3;
 
     wire [7:0] status_reg = {cpu_write_pending, cpu_read_pending, sram_clear_active, sram_diag_busy, sram_diag_done, sram_diag_error, 1'b0, debug_ctrl_reg[0]};
 
@@ -221,6 +227,7 @@ module vga_demo (
     reg       cpu_write_done = 0;
     reg       cpu_read_done = 0;
     reg [18:0] sram_clear_addr = 19'h00000;
+    reg       sram_clear_phase = 1'b0;
     reg       sram_clear_seen_toggle = 0;
     reg [3:0] sram_diag_state = 4'd0;
     reg [2:0] sram_diag_index = 3'd0;
@@ -342,6 +349,7 @@ module vga_demo (
             endcase
         end else if (!sram_clear_active && sram_clear_request_toggle != sram_clear_seen_toggle) begin
             sram_clear_active <= 1'b1;
+            sram_clear_phase <= 1'b0;
             sram_clear_seen_toggle <= sram_clear_request_toggle;
             sram_clear_addr <= 19'h00000;
         end
@@ -349,11 +357,18 @@ module vga_demo (
         else if (sram_clear_active) begin
             sram_addr <= sram_clear_addr;
             sram_write_data <= 8'h00;
-            sram_we_n <= 1'b0;
-            if (sram_clear_addr == 19'h12BFF) begin
-                sram_clear_active <= 1'b0;
+            sram_oe_n <= 1'b1;
+            if (!sram_clear_phase) begin
+                sram_we_n <= 1'b1;
+                sram_clear_phase <= 1'b1;
             end else begin
-                sram_clear_addr <= sram_clear_addr + 1'b1;
+                sram_we_n <= 1'b0;
+                sram_clear_phase <= 1'b0;
+                if (sram_clear_addr == 19'h12BFF) begin
+                    sram_clear_active <= 1'b0;
+                end else begin
+                    sram_clear_addr <= sram_clear_addr + 1'b1;
+                end
             end
         end else if (video_mode) begin
             // BITMAPOVÝ REŽIM (TDM 1:1)
@@ -364,10 +379,30 @@ module vga_demo (
                 bitmap_pixel_reg <= sram_data; // Zde bezpečně načteme surová data pro bitmapu
 
                 if (cpu_write_pending && !is_palette_addr) begin
-                    sram_addr <= current_vram_addr;
-                    sram_write_data <= cpu_write_data;
-                    sram_we_n <= 1'b0;
-                    cpu_write_done <= 1;
+                    case (cpu_write_state)
+                        CPU_WRITE_IDLE, CPU_WRITE_SETUP: begin
+                            sram_addr <= current_vram_addr;
+                            sram_write_data <= cpu_write_data;
+                            sram_we_n <= 1'b1;
+                            sram_oe_n <= 1'b1;
+                            cpu_write_state <= CPU_WRITE_WE;
+                        end
+                        CPU_WRITE_WE: begin
+                            sram_addr <= current_vram_addr;
+                            sram_write_data <= cpu_write_data;
+                            sram_we_n <= 1'b0;
+                            sram_oe_n <= 1'b1;
+                            cpu_write_state <= CPU_WRITE_HOLD;
+                        end
+                        default: begin
+                            sram_addr <= current_vram_addr;
+                            sram_write_data <= cpu_write_data;
+                            sram_we_n <= 1'b0;
+                            sram_oe_n <= 1'b1;
+                            cpu_write_done <= 1;
+                            cpu_write_state <= CPU_WRITE_IDLE;
+                        end
+                    endcase
                 end else if (cpu_read_pending && !is_palette_addr) begin
                     sram_addr <= current_vram_addr;
                     sram_oe_n <= 1'b0;
@@ -399,10 +434,30 @@ module vga_demo (
                 default: begin
                     // Volné sloty pro CPU
                     if (cpu_write_pending && !is_palette_addr) begin
-                        sram_addr <= current_vram_addr;
-                        sram_write_data <= cpu_write_data;
-                        sram_we_n <= 1'b0;
-                        cpu_write_done <= 1;
+                        case (cpu_write_state)
+                            CPU_WRITE_IDLE, CPU_WRITE_SETUP: begin
+                                sram_addr <= current_vram_addr;
+                                sram_write_data <= cpu_write_data;
+                                sram_we_n <= 1'b1;
+                                sram_oe_n <= 1'b1;
+                                cpu_write_state <= CPU_WRITE_WE;
+                            end
+                            CPU_WRITE_WE: begin
+                                sram_addr <= current_vram_addr;
+                                sram_write_data <= cpu_write_data;
+                                sram_we_n <= 1'b0;
+                                sram_oe_n <= 1'b1;
+                                cpu_write_state <= CPU_WRITE_HOLD;
+                            end
+                            default: begin
+                                sram_addr <= current_vram_addr;
+                                sram_write_data <= cpu_write_data;
+                                sram_we_n <= 1'b0;
+                                sram_oe_n <= 1'b1;
+                                cpu_write_done <= 1;
+                                cpu_write_state <= CPU_WRITE_IDLE;
+                            end
+                        endcase
                     end else if (cpu_read_pending && !is_palette_addr) begin
                         sram_addr <= current_vram_addr;
                         sram_oe_n <= 1'b0;
@@ -475,8 +530,6 @@ module vga_demo (
             debug_code <= 3'd6;        // SRAM diagnostika bezi
         end else if (sram_diag_error) begin
             debug_code <= debug_blink_on ? 3'd1 : 3'd0; // SRAM chyba blika cervene
-        end else if (sram_diag_done && debug_ctrl_reg[7:5] == 3'd0) begin
-            debug_code <= 3'd4;        // SRAM diagnostika OK
         end else if (reg_write_pulse) begin
             debug_code <= 3'd1;        // CPU zapisuje do registru
             debug_hold_counter <= 22'h3fffff;
@@ -494,6 +547,8 @@ module vga_demo (
             debug_hold_counter <= 22'h3fffff;
         end else if (debug_hold_counter != 22'd0) begin
             debug_hold_counter <= debug_hold_counter - 1'b1;
+        end else if (sram_diag_done && debug_ctrl_reg[7:5] == 3'd0) begin
+            debug_code <= 3'd4;        // SRAM diagnostika OK
         end else begin
             debug_code <= 3'd6;        // Debug on, video generator idle/fetch baseline
         end
