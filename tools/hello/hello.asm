@@ -9,20 +9,31 @@
 ;   python ../ihex_gen.py hello.bin 3000 hello.hex
 
 ; ROM jump table (z kernel_api.inc)
+.setcpu "65C02"
 ROM_PRINTNL = $FF18     ; print null-terminated string + CR+LF (A=lo, X=hi)
+VGA_BASE = $CE00
 
 .org $3000
 
-start:
-    LDA #<msg_hello
-    LDX #>msg_hello
-    JSR ROM_PRINTNL
+reset:
+    lda #$00        ; Začneme s nulou
+loop:
+    sta VGA_BASE     ; Zápis do prvního registru FPGA
+    inc VGA_BASE     ; Zkusíme zapsat i do druhého ($CF01)
+    
+    ; Malý delay, aby to neblikalo moc rychle
+    ldx #$FF
+d1: ldy #$FF
+d2: dey
+    bne d2
+    dex
+    bne d1
 
-    LDA #<msg_bye
-    LDX #>msg_bye
-    JSR ROM_PRINTNL
+    clc
+    adc #$01        ; Zvětšíme hodnotu pro příští zápis
+    jmp loop
 
-    RTS                 ; návrat do shellu
+
 
 msg_hello:  .byte "Hello from Project65!", 0
 msg_bye:    .byte "Program OK. Return to shell.", 0
