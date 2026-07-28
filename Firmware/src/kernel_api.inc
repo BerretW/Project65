@@ -46,14 +46,16 @@ ROM_GETC      = $FF0F   ; Blocking receive → A
 ROM_SCAN      = $FF12   ; Non-blocking receive → A (0 = nothing)
 ROM_PUTNL     = $FF15   ; Send CR+LF
 ROM_PRINTNL   = $FF18   ; Print string + CR+LF (A=lo, X=hi)
+ROM_PRINTLN   = $FF18   ; Alias for println
 ROM_PRTBYTE   = $FF1B   ; Print A as 2 hex digits
-ROM_INSCAN    = $FF1E   ; Scan kbd or serial (non-blocking) → A
-ROM_GETINP    = $FF21   ; Wait for kbd or serial input → A
-ROM_DELAY     = $FF24   ; Software delay (A = count)
-ROM_ACIA_INIT = $FF27   ; Init ACIA (19200 8N1)
-ROM_IRQ_INIT  = $FF2A   ; Init IRQ timer
-ROM_NMI_INIT  = $FF2D   ; Init NMI timer
-ROM_INIT_VEC  = $FF30   ; Set IRQ/NMI vectors to default ISR
+ROM_PRINTHEX  = $FF1E   ; Print A as '$' + 2 hex digits
+ROM_INSCAN    = $FF21   ; Scan kbd or serial (non-blocking) → A
+ROM_GETINP    = $FF24   ; Wait for kbd or serial input → A
+ROM_DELAY     = $FF27   ; Software delay (A = count)
+ROM_ACIA_INIT = $FF2A   ; Init ACIA (19200 8N1)
+ROM_IRQ_INIT  = $FF2D   ; Init IRQ timer
+ROM_NMI_INIT  = $FF30   ; Init NMI timer
+ROM_INIT_VEC  = $FF33   ; Set IRQ/NMI vectors to default ISR
 
 ; ============================================================
 ; Part 2 – AppartusOS extended jump table ($FF33+)

@@ -16,22 +16,11 @@ VGA_BASE = $CE00
 .org $3000
 
 reset:
-    lda #$00        ; Začneme s nulou
-loop:
-    sta VGA_BASE     ; Zápis do prvního registru FPGA
-    inc VGA_BASE     ; Zkusíme zapsat i do druhého ($CF01)
+    lda #$55        ; Začneme s nulou
+    STA VGA_BASE
+    LDX VGA_BASE
     
-    ; Malý delay, aby to neblikalo moc rychle
-    ldx #$FF
-d1: ldy #$FF
-d2: dey
-    bne d2
-    dex
-    bne d1
 
-    clc
-    adc #$01        ; Zvětšíme hodnotu pro příští zápis
-    jmp loop
 
 
 

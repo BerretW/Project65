@@ -45,13 +45,14 @@ _JSCAN:      JMP _acia_scan       ; $FF12  Neblokovací příjem -> A (0 = nic)
 _JPUTNL:     JMP _acia_put_newline ; $FF15 Odešli CR+LF
 _JPRINTNL:   JMP _acia_print_nl   ; $FF18  Odešli řetězec + CR+LF
 _JPRTBYTE:   JMP _print_byte      ; $FF1B  Tisk A jako 2 hex znaky na serial
-_JINSCAN:    JMP _input_scan      ; $FF1E  Scan klávesnice nebo sériového portu -> A
-_JGETINP:    JMP _get_input       ; $FF21  Čekej na vstup (kbd nebo serial) -> A
-_JDELAY:     JMP _delay           ; $FF24  Softwarové zpoždění (délka v A)
-_JACIA_INIT: JMP _acia_init       ; $FF27  Inicializace ACIA (19200 8N1)
-_JIRQ_INIT:  JMP _irq_init        ; $FF2A  Inicializace IRQ timeru (VIA2)
-_JNMI_INIT:  JMP _nmi_init        ; $FF2D  Inicializace NMI timeru (VIA1)
-_JINIT_VEC:  JMP _init_vec        ; $FF30  Nastav IRQ/NMI vektory na ISR
+_JPRINTHEX:  JMP _print_hex       ; $FF1E  Tisk A jako '$' + 2 hex znaky na serial
+_JINSCAN:    JMP _input_scan      ; $FF21  Scan klávesnice nebo sériového portu -> A
+_JGETINP:    JMP _get_input       ; $FF24  Čekej na vstup (kbd nebo serial) -> A
+_JDELAY:     JMP _delay           ; $FF27  Softwarové zpoždění (délka v A)
+_JACIA_INIT: JMP _acia_init       ; $FF2A  Inicializace ACIA (19200 8N1)
+_JIRQ_INIT:  JMP _irq_init        ; $FF2D  Inicializace IRQ timeru (VIA2)
+_JNMI_INIT:  JMP _nmi_init        ; $FF30  Inicializace NMI timeru (VIA1)
+_JINIT_VEC:  JMP _init_vec        ; $FF33  Nastav IRQ/NMI vektory na ISR
 
 
 .segment "CODE"

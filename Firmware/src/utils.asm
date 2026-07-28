@@ -26,6 +26,7 @@ B:                .res 1
 .export _input_scan
 .export _get_input
 .export _print_byte
+.export _print_hex
 .export _irq_init
 .export _nmi_init
 .export _divide

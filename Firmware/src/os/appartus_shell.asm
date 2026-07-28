@@ -825,7 +825,7 @@ _strcpy_to_osname:
 RDF_RUN = $02
 
 str_banner:
-    .byte "AppartusOS v1.2",0
+    .byte "AppartusOS v1.4",0
 str_sub:
     .byte "HELP for help.",0
 str_prompt:

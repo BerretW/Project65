@@ -1241,24 +1241,36 @@ _bas_stmt_end:
 
 ; --- POKE addr, val ---
 _bas_stmt_poke:
-    JSR _bas_expr           ; address → bas_acc
+    JSR _bas_expr           ; Vypočítá adresu -> výsledek v bas_acc
     LDA bas_acc
-    STA bas_tmp
+    PHA                     ; Uloží dolní bajt adresy na zásobník
     LDA bas_acc+1
-    STA bas_tmp+1
+    PHA                     ; Uloží horní bajt adresy na zásobník
+
     JSR _bas_skip_spaces
     LDA (bas_ip)
     CMP #','
-    BNE @pk_err
-    INC bas_ip
-    BNE @pk_v
-    INC bas_ip+1
-@pk_v:
+    BNE @pk_err_stack
+    JSR _bas_skip_ip        ; Přeskočí čárku
+    
     JSR _bas_skip_spaces
-    JSR _bas_expr   ; value → bas_acc
-    LDA bas_acc
-    STA (bas_tmp)
+    JSR _bas_expr           ; Vypočítá hodnotu -> výsledek v bas_acc
+    
+    ; Teď musíme bezpečně přenést hodnotu z bas_acc do paměti,
+    ; ale nejdřív obnovit adresu ze zásobníku.
+    TAY                     ; Schováme si hodnotu k zápisu do registru Y
+    PLA
+    STA bas_tmp+1           ; Obnovíme horní bajt adresy
+    PLA
+    STA bas_tmp             ; Obnovíme dolní bajt adresy
+    
+    TYA                     ; Hodnotu k zápisu dáme zpět do A
+    STA (bas_tmp)           ; PROVEDEME ZÁPIS NA SPRÁVNOU ADRESU
     RTS
+
+@pk_err_stack:
+    PLA                     ; Vyčistit zásobník v případě chyby
+    PLA
 @pk_err:
     LDA #<str_syntax
     LDX #>str_syntax
