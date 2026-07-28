@@ -111,6 +111,12 @@ _PRHEX:           AND #$0F        ;Mask LSD for hex print.
                   PLA ;*Restore A
                   RTS ;*Done, over and out...
 
+_print_hex:       PHA               ; preserve byte
+                  LDA #$24         ; '$'
+                  JSR _acia_putc
+                  PLA               ; restore original byte
+                  JSR _print_byte
+                  RTS
 
 
 _init_vec:          LDA #<_IRQ_ISR
