@@ -248,8 +248,8 @@ _cmd_help:
     JMP _shell_loop
 
 _cmd_ver:
-    LDA #<str_version
-    LDX #>str_version
+    LDA #<str_banner
+    LDX #>str_banner
     JSR _acia_print_nl
     JMP _shell_loop
 
@@ -273,8 +273,8 @@ _cmd_format:
     BNE @cancel
 @do_fmt:
     JSR _rd_init
-    LDA #<str_fmt_done
-    LDX #>str_fmt_done
+    LDA #<str_prog_ret
+    LDX #>str_prog_ret
     JSR _acia_print_nl
     JMP _shell_loop
 @cancel:
@@ -825,13 +825,11 @@ _strcpy_to_osname:
 RDF_RUN = $02
 
 str_banner:
-    .byte "AppartusOS v1.4",0
+    .byte "AppartusOS v1.5",0
 str_sub:
     .byte "HELP for help.",0
 str_prompt:
     .byte "> ",0
-str_version:
-    .byte "AppartusOS v1.2 2026",0
 str_rd_fmt:
     .byte "RAMDisk init...",0
 str_help:
@@ -839,17 +837,15 @@ str_help:
     .byte "SAVE DEL RUN TYPE BASIC RESET",13,10
     .byte "SAVE <n> <a> <sz>  LSAVE <n>",13,10,0
 str_fmt_confirm:
-    .byte "Format? ALL LOST. (Y/N): ",0
-str_fmt_done:
-    .byte "Fmated.",0
+    .byte "Format? (Y/N): ",0
 str_cancelled:
     .byte "Cancel.",0
 str_load_wait:
-    .byte "Send Intel HEX (ESC=abort)...",0
+    .byte "Send iHEX (ESC=abort)...",0
 str_load_ok:
-    .byte "HEX OK.",0
+    .byte "iHEX OK.",0
 str_load_warn:
-    .byte "?HEX chksum.",0
+    .byte "?iHEX chksum.",0
 str_save_ok:
     .byte "Saved.",0
 str_save_err:
