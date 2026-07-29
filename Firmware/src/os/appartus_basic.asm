@@ -1255,15 +1255,16 @@ _bas_stmt_poke:
     
     JSR _bas_skip_spaces
     JSR _bas_expr           ; Vypočítá hodnotu -> výsledek v bas_acc
-    
+
     ; Teď musíme bezpečně přenést hodnotu z bas_acc do paměti,
     ; ale nejdřív obnovit adresu ze zásobníku.
+    LDA bas_acc             ; Hodnotu z výrazu načteme z bas_acc
     TAY                     ; Schováme si hodnotu k zápisu do registru Y
     PLA
     STA bas_tmp+1           ; Obnovíme horní bajt adresy
     PLA
     STA bas_tmp             ; Obnovíme dolní bajt adresy
-    
+
     TYA                     ; Hodnotu k zápisu dáme zpět do A
     STA (bas_tmp)           ; PROVEDEME ZÁPIS NA SPRÁVNOU ADRESU
     RTS
