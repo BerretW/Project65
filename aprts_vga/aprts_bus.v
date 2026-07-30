@@ -62,7 +62,13 @@ module aprts_bus (
     inout  [7:0]  sram_data,
     output        sram_ce_n,
     output        sram_oe_n,
-    output        sram_we_n
+    output        sram_we_n,
+
+    // PCM5102A Audio Interface
+    output        pcm_bck,
+    output        pcm_din,
+    output        pcm_lrck,
+    output        pcm_sck
 );
 
     reg [7:0] reg_bg_color = 8'h00;
@@ -71,6 +77,28 @@ module aprts_bus (
     reg [7:0] addr_mid     = 8'h00;
     reg [7:0] addr_lo      = 8'h00;
     reg [7:0] write_val    = 8'h00;
+
+    // Audio register-indirect interface (4 channels)
+    reg [3:0] aud_addr      = 4'h0;
+    reg [7:0] reg_freq_lo_0 = 8'h00;
+    reg [7:0] reg_freq_hi_0 = 8'h00;
+    reg [7:0] reg_vol_0     = 8'h00;
+    reg [7:0] reg_freq_lo_1 = 8'h00;
+    reg [7:0] reg_freq_hi_1 = 8'h00;
+    reg [7:0] reg_vol_1     = 8'h00;
+    reg [7:0] reg_freq_lo_2 = 8'h00;
+    reg [7:0] reg_freq_hi_2 = 8'h00;
+    reg [7:0] reg_vol_2     = 8'h00;
+    reg [7:0] reg_freq_lo_3 = 8'h00;
+    reg [7:0] reg_freq_hi_3 = 8'h00;
+    reg [7:0] reg_vol_3     = 8'h00;
+
+    reg [8:0] audio_div     = 9'd0;
+    reg [15:0] phase_acc_0  = 16'd0;
+    reg [15:0] phase_acc_1  = 16'd0;
+    reg [15:0] phase_acc_2  = 16'd0;
+    reg [15:0] phase_acc_3  = 16'd0;
+    reg pcm_din_r           = 1'b0;
 
     reg clear_busy  = 1'b0;
     reg write_req   = 1'b0;
@@ -147,12 +175,21 @@ module aprts_bus (
         current_font_row_data <= font_mem[{sram_data[6:0], char_line[2:0]}];
     end
 
+    // Detekce náběžné hrany zápisového cyklu pro spolehlivý jednorázový zápis
+    reg write_active_last = 1'b0;
+    wire write_active = !lv_cs && !n_mem_w;
+    wire write_en = write_active && !write_active_last;
+
+    always @(posedge clk) begin
+        write_active_last <= write_active;
+    end
+
     // CPU interface & Register writes (Okamžitý zápis bez čekání na blanking)
     always @(posedge clk) begin
         fpga_reset_req <= 1'b0;
         font_data_reg <= font_mem[{addr_hi[6:0], addr_mid[2:0]}];
 
-        if (!lv_cs && !n_mem_w) begin
+        if (write_en) begin
             case (lv_addr)
                 4'h0: reg_bg_color <= lv_data;
                 4'h1: addr_hi      <= lv_data;
@@ -166,6 +203,30 @@ module aprts_bus (
                         write_val <= lv_data;
                     end
                 end
+                4'h5: aud_addr <= lv_data[3:0];
+                4'h6: begin
+                    case (aud_addr)
+                        4'h0: reg_freq_lo_0 <= lv_data;
+                        4'h1: reg_freq_hi_0 <= lv_data;
+                        4'h2: reg_vol_0     <= lv_data;
+                        4'h3: reg_freq_lo_1 <= lv_data;
+                        4'h4: reg_freq_hi_1 <= lv_data;
+                        4'h5: reg_vol_1     <= lv_data;
+                        4'h6: reg_freq_lo_2 <= lv_data;
+                        4'h7: reg_freq_hi_2 <= lv_data;
+                        4'h8: reg_vol_2     <= lv_data;
+                        4'h9: reg_freq_lo_3 <= lv_data;
+                        4'hA: reg_freq_hi_3 <= lv_data;
+                        4'hB: reg_vol_3     <= lv_data;
+                        default: ;
+                    endcase
+                    // Auto-increment selector index to make sequential setup of channels extremely fast and easy
+                    if (aud_addr < 4'hB) begin
+                        aud_addr <= aud_addr + 4'd1;
+                    end else begin
+                        aud_addr <= 4'h0;
+                    end
+                end
                 4'hD: begin
                     mode <= lv_data;
                     if (lv_data == 8'h0E) begin
@@ -174,6 +235,19 @@ module aprts_bus (
                         addr_mid       <= 8'h00;
                         addr_lo        <= 8'h00;
                         write_val      <= 8'h00;
+                        aud_addr       <= 4'h0;
+                        reg_freq_lo_0  <= 8'h00;
+                        reg_freq_hi_0  <= 8'h00;
+                        reg_vol_0      <= 8'h00;
+                        reg_freq_lo_1  <= 8'h00;
+                        reg_freq_hi_1  <= 8'h00;
+                        reg_vol_1      <= 8'h00;
+                        reg_freq_lo_2  <= 8'h00;
+                        reg_freq_hi_2  <= 8'h00;
+                        reg_vol_2      <= 8'h00;
+                        reg_freq_lo_3  <= 8'h00;
+                        reg_freq_hi_3  <= 8'h00;
+                        reg_vol_3      <= 8'h00;
                         clear_busy     <= 1'b0;
                         clear_tick     <= 1'b0;
                         clear_ptr      <= 19'h0;
@@ -270,6 +344,24 @@ module aprts_bus (
                     internal_read_val = sram_data;
                 end
             end
+            4'h5: internal_read_val = {4'b0, aud_addr};
+            4'h6: begin
+                case (aud_addr)
+                    4'h0: internal_read_val = reg_freq_lo_0;
+                    4'h1: internal_read_val = reg_freq_hi_0;
+                    4'h2: internal_read_val = reg_vol_0;
+                    4'h3: internal_read_val = reg_freq_lo_1;
+                    4'h4: internal_read_val = reg_freq_hi_1;
+                    4'h5: internal_read_val = reg_vol_1;
+                    4'h6: internal_read_val = reg_freq_lo_2;
+                    4'h7: internal_read_val = reg_freq_hi_2;
+                    4'h8: internal_read_val = reg_vol_2;
+                    4'h9: internal_read_val = reg_freq_lo_3;
+                    4'hA: internal_read_val = reg_freq_hi_3;
+                    4'hB: internal_read_val = reg_vol_3;
+                    default: internal_read_val = 8'h00;
+                endcase
+            end
             4'hF: internal_read_val = {7'b0, addr_ready};
             4'hD: internal_read_val = mode;
             default: internal_read_val = 8'h00;
@@ -277,5 +369,89 @@ module aprts_bus (
     end
 
     assign lv_data = (!lv_cs && !n_mem_r) ? internal_read_val : 8'bz;
+
+    // =============================================================
+    // PCM5102A AUDIO CONTROLLER & MULTI-CHANNEL TONE GENERATOR
+    // =============================================================
+    // Generates a 4-channel mixed stereo square wave based on DDS logic.
+    // Each channel is defined by a 16-bit frequency and 8-bit volume.
+    // At clk = 25 MHz:
+    // - audio_div is a 9-bit counter, running at 25 MHz.
+    // - pcm_bck  = audio_div[3] (25 MHz / 16 = 1.5625 MHz)
+    // - pcm_lrck = audio_div[8] (25 MHz / 512 = 48.828 kHz, typical Fs)
+    // - 16-bit phase accumulators are updated when audio_div == 0.
+    // - Output sample is the signed sum of all channel square waves weighted by their volumes.
+    // =============================================================
+
+    always @(posedge clk) begin
+        if (fpga_reset_req) begin
+            audio_div <= 9'd0;
+        end else begin
+            audio_div <= audio_div + 9'd1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (fpga_reset_req) begin
+            phase_acc_0 <= 16'd0;
+            phase_acc_1 <= 16'd0;
+            phase_acc_2 <= 16'd0;
+            phase_acc_3 <= 16'd0;
+        end else if (audio_div == 9'd0) begin
+            phase_acc_0 <= phase_acc_0 + {reg_freq_hi_0, reg_freq_lo_0};
+            phase_acc_1 <= phase_acc_1 + {reg_freq_hi_1, reg_freq_lo_1};
+            phase_acc_2 <= phase_acc_2 + {reg_freq_hi_2, reg_freq_lo_2};
+            phase_acc_3 <= phase_acc_3 + {reg_freq_hi_3, reg_freq_lo_3};
+        end
+    end
+
+    // Channel square wave outputs
+    wire sq_0 = phase_acc_0[15];
+    wire sq_1 = phase_acc_1[15];
+    wire sq_2 = phase_acc_2[15];
+    wire sq_3 = phase_acc_3[15];
+
+    // Channel mixing (unsigned sum of active volumes)
+    wire [9:0] mixed_unsigned = 
+        (sq_0 ? reg_vol_0 : 8'd0) +
+        (sq_1 ? reg_vol_1 : 8'd0) +
+        (sq_2 ? reg_vol_2 : 8'd0) +
+        (sq_3 ? reg_vol_3 : 8'd0);
+
+    // Convert unsigned [0..1020] range to signed 16-bit I2S format
+    // Subtract 510 to center the waveform, then shift left by 6 to fit in signed 16-bit
+    wire signed [9:0] mixed_signed = mixed_unsigned - 10'd510;
+    wire [15:0] current_sample = {mixed_signed[9], mixed_signed[8:0], 6'b0};
+
+    // I2S Shift register transmitter
+    always @(posedge clk) begin
+        if (fpga_reset_req) begin
+            pcm_din_r <= 1'b0;
+        end else if (audio_div[3:0] == 4'd15) begin
+            case (audio_div[7:4])
+                4'd0:  pcm_din_r <= current_sample[15];
+                4'd1:  pcm_din_r <= current_sample[14];
+                4'd2:  pcm_din_r <= current_sample[13];
+                4'd3:  pcm_din_r <= current_sample[12];
+                4'd4:  pcm_din_r <= current_sample[11];
+                4'd5:  pcm_din_r <= current_sample[10];
+                4'd6:  pcm_din_r <= current_sample[9];
+                4'd7:  pcm_din_r <= current_sample[8];
+                4'd8:  pcm_din_r <= current_sample[7];
+                4'd9:  pcm_din_r <= current_sample[6];
+                4'd10: pcm_din_r <= current_sample[5];
+                4'd11: pcm_din_r <= current_sample[4];
+                4'd12: pcm_din_r <= current_sample[3];
+                4'd13: pcm_din_r <= current_sample[2];
+                4'd14: pcm_din_r <= current_sample[1];
+                4'd15: pcm_din_r <= current_sample[0];
+            endcase
+        end
+    end
+
+    assign pcm_bck  = audio_div[3];
+    assign pcm_lrck = audio_div[8];
+    assign pcm_din  = pcm_din_r;
+    assign pcm_sck  = 1'b0; // Output 0 to use the internal PLL of the breakout board
 
 endmodule
