@@ -7,50 +7,41 @@ play_chord:
     LDA #0
     STA AUD_ADDR
 
-    ; 2. Kanál 0: tón C4 (261 Hz, hodnota S = 351 = $015F), hlasitost 128 (50%)
+    ; 2. NASTAVENÍ FREKVENCÍ A MAXIMÁLNÍCH HLASITOSTÍ (0x00 až 0x0B)
+    
+    ; Kanál 0: tón C4 (261 Hz, hodnota S = 351 = $015F), Max hlasitost 255 (100%)
     LDA #$5F
-    STA AUD_DATA        ; Zapíše se do indexu 0x0 (reg_freq_lo_0), index se inkrementuje na 0x1
+    STA AUD_DATA        ; 0x00 -> Freq Lo 0, posun na 0x01
     LDA #$01
-    STA AUD_DATA        ; Zapíše se do indexu 0x1 (reg_freq_hi_0), index se inkrementuje na 0x2
-    LDA #128
-    STA AUD_DATA        ; Zapíše se do indexu 0x2 (reg_vol_0), index se inkrementuje na 0x3
+    STA AUD_DATA        ; 0x01 -> Freq Hi 0, posun na 0x02
+    LDA #255
+    STA AUD_DATA        ; 0x02 -> Vol 0, posun na 0x03
 
-    ; ; 3. Kanál 1: tón E4 (329 Hz, hodnota S = 442 = $01BA), hlasitost 128 (50%)
-    ; LDA #$BA
-    ; STA AUD_DATA        ; Zapíše se do indexu 0x3 (reg_freq_lo_1), index se inkrementuje na 0x4
-    ; LDA #$01
-    ; STA AUD_DATA        ; Zapíše se do indexu 0x4 (reg_freq_hi_1), index se inkrementuje na 0x5
-    ; LDA #128
-    ; STA AUD_DATA        ; Zapíše se do indexu 0x5 (reg_vol_1), index se inkrementuje na 0x6
 
-    ; ; 4. Kanál 2: tón G4 (392 Hz, hodnota S = 526 = $020E), hlasitost 128 (50%)
-    ; LDA #$0E
-    ; STA AUD_DATA        ; Zapíše se do indexu 0x6 (reg_freq_lo_2), index se inkrementuje na 0x7
-    ; LDA #$02
-    ; STA AUD_DATA        ; Zapíše se do indexu 0x7 (reg_freq_hi_2), index se inkrementuje na 0x8
-    ; LDA #128
-    ; STA AUD_DATA        ; Zapíše se do indexu 0x8 (reg_vol_2), index se inkrementuje na 0x9
+    ; 3. NASTAVENÍ TVARŮ VLN, ADSR ENABLE A TRIGGER GATE (0x0C až 0x0F)
+    ; Reg Ctrl bity: [2:0] Wave (0=Square, 1=Triangle, 2=Sawtooth, 3=Sine, 4=Trapezoid)
+    ;                [3]   ADSR Enable (1 = Zapnuto, 0 = Vypnuto)
+    ;                [4]   Gate (1 = Note On / Attack, 0 = Note Off / Release)
 
-    ; ; 5. Kanál 3: tón C5 (523 Hz, hodnota S = 702 = $02BE), hlasitost 128 (50%)
-    ; LDA #$BE
-    ; STA AUD_DATA        ; Zapíše se do indexu 0x9 (reg_freq_lo_3), index se inkrementuje na 0xA
-    ; LDA #$02
-    ; STA AUD_DATA        ; Zapíše se do indexu 0xA (reg_freq_hi_3), index se inkrementuje na 0xB
-    ; LDA #128
-    ; STA AUD_DATA        ; Zapíše se do indexu 0xB (reg_vol_3), index se inkrementuje na 0xC
-
-    ; 6. Nastavení tvarů vln pro jednotlivé kanály
-    ; Význam hodnot v reg_ctrl: 
-    ; 0 = Obdélník, 1 = Trojúhelník, 2 = Pila, 3 = Sinus, 4 = Trapéz (modifikovaný trojúhelník)
+    
     LDA #$0C
-    STA AUD_ADDR        ; Nastaví se index vnitřního registru na 0xC (reg_ctrl_0)
-    LDA #0
-    STA AUD_DATA        ; Zapíše se do indexu 0xC (reg_ctrl_0 = Sinus), index -> 0xD
-    ; LDA #1
-    ; STA AUD_DATA        ; Zapíše se do indexu 0xD (reg_ctrl_1 = Trojúhelník), index -> 0xE
-    ; LDA #2
-    ; STA AUD_DATA        ; Zapíše se do indexu 0xE (reg_ctrl_2 = Pila), index -> 0xF
-    ; LDA #4
-    ; STA AUD_DATA        ; Zapíše se do indexu 0xF (reg_ctrl_3 = Trapéz), index -> 0x0 (přetečení)
+    STA AUD_ADDR       
+    ; Kanál 0: Sine (3) + ADSR Enable (8) + Gate Note On (16) = 3 + 8 + 16 = 27 = $1B
+    LDA #$1B
+    STA AUD_DATA        ; 0x0C -> Ctrl 0, posun na 0x0D
+
+
+
+    ; 4. NASTAVENÍ ČASŮ ADSR (0x10 až 0x17)
+    ; Reg ADSR AD (Attack / Decay): [7:4] Attack (0=Slowest, F=Fastest), [3:0] Decay (0=Slowest, F=Fastest)
+    ; Reg ADSR SR (Sustain / Release): [7:4] Sustain Level (0=Mute, F=Full), [3:0] Release (0=Slowest, F=Fastest)
+    LDA #$10
+    STA AUD_ADDR        
+    ; Kanál 0 (Sine): Pomalý náběh (Attack=4), střední Decay=8, střední Sustain=10 ($A), rychlý doznění (Release=12=$C)
+    LDA #$48
+    STA AUD_DATA        ; 0x10 -> Attack/Decay Ch0, posun na 0x11
+    LDA #$AC
+    STA AUD_DATA        ; 0x11 -> Sustain/Release Ch0, posun na 0x12
+
 
     RTS
