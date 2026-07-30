@@ -19,8 +19,8 @@ AUDIO_INC = 1
 
 ; --- Hardwarové porty audio řadiče ---
 AUD_BASE = $CE00
-AUD_ADDR = AUD_BASE + 5     ; Registrová adresa ($CF05)
-AUD_DATA = AUD_BASE + 6     ; Registrová data ($CF06)
+AUD_ADDR = AUD_BASE + 5     ; Registrová adresa ($CE05)
+AUD_DATA = AUD_BASE + 6     ; Registrová data ($CE06)
 
 ; --- Konstanty typů vlnových průběhů (Waveforms) ---
 WAVE_SQUARE   = 0   ; Obdélníková vlna
