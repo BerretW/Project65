@@ -92,6 +92,10 @@ module aprts_bus (
     reg [7:0] reg_freq_lo_3 = 8'h00;
     reg [7:0] reg_freq_hi_3 = 8'h00;
     reg [7:0] reg_vol_3     = 8'h00;
+    reg [7:0] reg_ctrl_0    = 8'h00;
+    reg [7:0] reg_ctrl_1    = 8'h00;
+    reg [7:0] reg_ctrl_2    = 8'h00;
+    reg [7:0] reg_ctrl_3    = 8'h00;
 
     reg [8:0] audio_div     = 9'd0;
     reg [15:0] phase_acc_0  = 16'd0;
@@ -218,10 +222,14 @@ module aprts_bus (
                         4'h9: reg_freq_lo_3 <= lv_data;
                         4'hA: reg_freq_hi_3 <= lv_data;
                         4'hB: reg_vol_3     <= lv_data;
+                        4'hC: reg_ctrl_0    <= lv_data;
+                        4'hD: reg_ctrl_1    <= lv_data;
+                        4'hE: reg_ctrl_2    <= lv_data;
+                        4'hF: reg_ctrl_3    <= lv_data;
                         default: ;
                     endcase
                     // Auto-increment selector index to make sequential setup of channels extremely fast and easy
-                    if (aud_addr < 4'hB) begin
+                    if (aud_addr < 4'hF) begin
                         aud_addr <= aud_addr + 4'd1;
                     end else begin
                         aud_addr <= 4'h0;
@@ -248,6 +256,10 @@ module aprts_bus (
                         reg_freq_lo_3  <= 8'h00;
                         reg_freq_hi_3  <= 8'h00;
                         reg_vol_3      <= 8'h00;
+                        reg_ctrl_0     <= 8'h00;
+                        reg_ctrl_1     <= 8'h00;
+                        reg_ctrl_2     <= 8'h00;
+                        reg_ctrl_3     <= 8'h00;
                         clear_busy     <= 1'b0;
                         clear_tick     <= 1'b0;
                         clear_ptr      <= 19'h0;
@@ -359,6 +371,10 @@ module aprts_bus (
                     4'h9: internal_read_val = reg_freq_lo_3;
                     4'hA: internal_read_val = reg_freq_hi_3;
                     4'hB: internal_read_val = reg_vol_3;
+                    4'hC: internal_read_val = reg_ctrl_0;
+                    4'hD: internal_read_val = reg_ctrl_1;
+                    4'hE: internal_read_val = reg_ctrl_2;
+                    4'hF: internal_read_val = reg_ctrl_3;
                     default: internal_read_val = 8'h00;
                 endcase
             end
@@ -405,18 +421,126 @@ module aprts_bus (
         end
     end
 
-    // Channel square wave outputs
-    wire sq_0 = phase_acc_0[15];
-    wire sq_1 = phase_acc_1[15];
-    wire sq_2 = phase_acc_2[15];
-    wire sq_3 = phase_acc_3[15];
+    function [7:0] get_sine;
+        input [5:0] phase;
+        case (phase)
+            6'd0:  get_sine = 8'd128;
+            6'd1:  get_sine = 8'd140;
+            6'd2:  get_sine = 8'd153;
+            6'd3:  get_sine = 8'd165;
+            6'd4:  get_sine = 8'd177;
+            6'd5:  get_sine = 8'd188;
+            6'd6:  get_sine = 8'd199;
+            6'd7:  get_sine = 8'd209;
+            6'd8:  get_sine = 8'd218;
+            6'd9:  get_sine = 8'd226;
+            6'd10: get_sine = 8'd234;
+            6'd11: get_sine = 8'd240;
+            6'd12: get_sine = 8'd245;
+            6'd13: get_sine = 8'd250;
+            6'd14: get_sine = 8'd253;
+            6'd15: get_sine = 8'd254;
+            6'd16: get_sine = 8'd255;
+            6'd17: get_sine = 8'd254;
+            6'd18: get_sine = 8'd253;
+            6'd19: get_sine = 8'd250;
+            6'd20: get_sine = 8'd245;
+            6'd21: get_sine = 8'd240;
+            6'd22: get_sine = 8'd234;
+            6'd23: get_sine = 8'd226;
+            6'd24: get_sine = 8'd218;
+            6'd25: get_sine = 8'd209;
+            6'd26: get_sine = 8'd199;
+            6'd27: get_sine = 8'd188;
+            6'd28: get_sine = 8'd177;
+            6'd29: get_sine = 8'd165;
+            6'd30: get_sine = 8'd153;
+            6'd31: get_sine = 8'd140;
+            6'd32: get_sine = 8'd128;
+            6'd33: get_sine = 8'd115;
+            6'd34: get_sine = 8'd102;
+            6'd35: get_sine = 8'd90;
+            6'd36: get_sine = 8'd78;
+            6'd37: get_sine = 8'd67;
+            6'd38: get_sine = 8'd56;
+            6'd39: get_sine = 8'd46;
+            6'd40: get_sine = 8'd37;
+            6'd41: get_sine = 8'd29;
+            6'd42: get_sine = 8'd21;
+            6'd43: get_sine = 8'd15;
+            6'd44: get_sine = 8'd10;
+            6'd45: get_sine = 8'd5;
+            6'd46: get_sine = 8'd2;
+            6'd47: get_sine = 8'd1;
+            6'd48: get_sine = 8'd0;
+            6'd49: get_sine = 8'd1;
+            6'd50: get_sine = 8'd2;
+            6'd51: get_sine = 8'd5;
+            6'd52: get_sine = 8'd10;
+            6'd53: get_sine = 8'd15;
+            6'd54: get_sine = 8'd21;
+            6'd55: get_sine = 8'd29;
+            6'd56: get_sine = 8'd37;
+            6'd57: get_sine = 8'd46;
+            6'd58: get_sine = 8'd56;
+            6'd59: get_sine = 8'd67;
+            6'd60: get_sine = 8'd78;
+            6'd61: get_sine = 8'd90;
+            6'd62: get_sine = 8'd102;
+            6'd63: get_sine = 8'd115;
+            default: get_sine = 8'd128;
+        endcase
+    endfunction
 
-    // Channel mixing (unsigned sum of active volumes)
-    wire [9:0] mixed_unsigned = 
-        (sq_0 ? reg_vol_0 : 8'd0) +
-        (sq_1 ? reg_vol_1 : 8'd0) +
-        (sq_2 ? reg_vol_2 : 8'd0) +
-        (sq_3 ? reg_vol_3 : 8'd0);
+    function [7:0] get_wave_val;
+        input [15:0] phase;
+        input [2:0] ctrl;
+        case (ctrl)
+            3'd0: begin // Square (Obdélník)
+                get_wave_val = phase[15] ? 8'hFF : 8'h00;
+            end
+            3'd1: begin // Triangle (Trojúhelník)
+                get_wave_val = phase[15] ? ~phase[14:7] : phase[14:7];
+            end
+            3'd2: begin // Sawtooth (Pila)
+                get_wave_val = phase[15:8];
+            end
+            3'd3: begin // Sine (Sinus)
+                get_wave_val = get_sine(phase[15:10]);
+            end
+            3'd4: begin // Modified Triangle / Trapezoid (Trapéz)
+                if (!phase[15]) begin
+                    get_wave_val = phase[14] ? 8'hFF : {phase[13:7], 1'b0};
+                end else begin
+                    get_wave_val = phase[14] ? 8'h00 : ~{phase[13:7], 1'b0};
+                end
+            end
+            default: begin
+                get_wave_val = phase[15] ? 8'hFF : 8'h00;
+            end
+        endcase
+    endfunction
+
+    // Generate waveforms based on channel control registers
+    wire [7:0] wave_0 = get_wave_val(phase_acc_0, reg_ctrl_0[2:0]);
+    wire [7:0] wave_1 = get_wave_val(phase_acc_1, reg_ctrl_1[2:0]);
+    wire [7:0] wave_2 = get_wave_val(phase_acc_2, reg_ctrl_2[2:0]);
+    wire [7:0] wave_3 = get_wave_val(phase_acc_3, reg_ctrl_3[2:0]);
+
+    // Channel volume weighting (8-bit wave * 8-bit volume -> 16-bit, shifted right by 8)
+    wire [15:0] prod_0 = wave_0 * reg_vol_0;
+    wire [15:0] prod_1 = wave_1 * reg_vol_1;
+    wire [15:0] prod_2 = wave_2 * reg_vol_2;
+    wire [15:0] prod_3 = wave_3 * reg_vol_3;
+
+    wire [7:0] weighted_0 = prod_0[15:8];
+    wire [7:0] weighted_1 = prod_1[15:8];
+    wire [7:0] weighted_2 = prod_2[15:8];
+    wire [7:0] weighted_3 = prod_3[15:8];
+
+    // Channel mixing (unsigned sum of weighted channels)
+    // Max sum is 255 * 4 = 1020, which fits in 10 bits.
+    wire [9:0] mixed_unsigned = weighted_0 + weighted_1 + weighted_2 + weighted_3;
 
     // Convert unsigned [0..1020] range to signed 16-bit I2S format
     // Subtract 510 to center the waveform, then shift left by 6 to fit in signed 16-bit
