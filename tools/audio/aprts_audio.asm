@@ -13,94 +13,21 @@
 ;   * AUD_ADDR ($CF05) - zápis vnitřní adresy registru (0-23)
 ;   * AUD_DATA ($CF06) - zápis/čtení hodnoty vybraného registru (auto-inkrement)
 ; ==============================================================================
+          .setcpu		"65C02"
+          .smart		on
+          .autoimport	on
 
-.ifndef AUDIO_INC
-AUDIO_INC = 1
+.include "audio.inc65"
+          .export audio_init
+          .export  audio_set_freq
+          .export  audio_set_vol
+          .export  audio_set_ctrl
+          .export  audio_set_adsr
+          .export  audio_play_note
+          .export  audio_stop_note
+          .export  audio_beep
+          .export  audio_delay_ms
 
-; --- Hardwarové porty audio řadiče ---
-AUD_BASE = $CE00
-AUD_ADDR = AUD_BASE + 5     ; Registrová adresa ($CE05)
-AUD_DATA = AUD_BASE + 6     ; Registrová data ($CE06)
-
-; --- Konstanty typů vlnových průběhů (Waveforms) ---
-WAVE_SQUARE   = 0   ; Obdélníková vlna
-WAVE_TRIANGLE = 1   ; Trojúhelníková vlna
-WAVE_SAWTOOTH = 2   ; Pilový průběh
-WAVE_SINE     = 3   ; Sinusoida
-WAVE_TRAPEZOID = 4  ; Trapézový / lichoběžníkový průběh
-
-; --- Konstanty pro řízení obálky a tónu ---
-ADSR_OFF = $00
-ADSR_ON  = $08      ; Povolení ADSR obálky (bit 3)
-GATE_OFF = $00
-GATE_ON  = $10      ; Spuštění tónu / Note On (bit 4)
-
-; --- Frekvenční tabulka tónů (16-bit DDS doplňovací slova) ---
-; Vypočteno jako: S = f_out * 65536 / 48828.125 = f_out * 1.342177
-
-; 3. oktáva (basová)
-TONE_C3  = $00B0    ; 130.81 Hz
-TONE_CS3 = $00BA    ; 138.59 Hz
-TONE_D3  = $00C5    ; 146.83 Hz
-TONE_DS3 = $00D1    ; 155.56 Hz
-TONE_E3  = $00DD    ; 164.81 Hz
-TONE_F3  = $00EA    ; 174.61 Hz
-TONE_FS3 = $00F8    ; 185.00 Hz
-TONE_G3  = $0107    ; 196.00 Hz
-TONE_GS3 = $0116    ; 207.65 Hz
-TONE_A3  = $0127    ; 220.00 Hz
-TONE_AS3 = $0138    ; 233.08 Hz
-TONE_B3  = $014B    ; 246.94 Hz
-
-; 4. oktáva (jednočárkovaná - komorní A = 440 Hz)
-TONE_C4  = $015F    ; 261.63 Hz (střední C)
-TONE_CS4 = $0174    ; 277.18 Hz
-TONE_D4  = $018A    ; 293.66 Hz
-TONE_DS4 = $01A2    ; 311.13 Hz
-TONE_E4  = $01BA    ; 329.63 Hz
-TONE_F4  = $01D5    ; 349.23 Hz
-TONE_FS4 = $01F1    ; 369.99 Hz
-TONE_G4  = $020E    ; 392.00 Hz
-TONE_GS4 = $022D    ; 415.30 Hz
-TONE_A4  = $024F    ; 440.00 Hz
-TONE_AS4 = $0272    ; 466.16 Hz
-TONE_B4  = $0297    ; 493.88 Hz
-
-; 5. oktáva (dvoučárkovaná)
-TONE_C5  = $02BE    ; 523.25 Hz
-TONE_CS5 = $02E8    ; 554.37 Hz
-TONE_D5  = $0314    ; 587.33 Hz
-TONE_DS5 = $0343    ; 622.25 Hz
-TONE_E5  = $0375    ; 659.25 Hz
-TONE_F5  = $03A9    ; 698.46 Hz
-TONE_FS5 = $03E1    ; 739.99 Hz
-TONE_G5  = $041C    ; 783.99 Hz
-TONE_GS5 = $045B    ; 830.61 Hz
-TONE_A5  = $049D    ; 880.00 Hz
-TONE_AS5 = $04E3    ; 932.33 Hz
-TONE_B5  = $052E    ; 987.77 Hz
-
-; 6. oktáva (tříčárkovaná)
-TONE_C6  = $057D    ; 1046.50 Hz
-TONE_D6  = $0628    ; 1174.66 Hz
-TONE_E6  = $06EA    ; 1318.51 Hz
-TONE_F6  = $0752    ; 1396.91 Hz
-TONE_G6  = $0837    ; 1567.98 Hz
-TONE_A6  = $093B    ; 1760.00 Hz
-TONE_B6  = $0A5D    ; 1975.53 Hz
-
-; Pauza (vypnutá hlasitost / ticho)
-TONE_REST = $0000
-
-; --- Makra a pomocné definice pro ADSR hodnoty ---
-; Rychlosti Attack/Decay/Release (0-15: 0=nejpomalé, 15=okamžité)
-; Úroveň Sustain (0-15: 0=ticho, 15=plná hlasitost)
-; Formát registru ADSR_AD: [7:4] Attack Rate, [3:0] Decay Rate
-; Formát registru ADSR_SR: [7:4] Sustain Level, [3:0] Release Rate
-
-
-; --- Dočasná proměnná pro výpočty v nulové stránce ---
-audio_tmp = $62
 
 ; ==============================================================================
 ; API FUNKCE DRIVERU
@@ -290,4 +217,3 @@ audio_delay_ms:
     PLA
     RTS
 
-.endif ; AUDIO_INC

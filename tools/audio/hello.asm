@@ -1,3 +1,6 @@
+.setcpu "65C02"
+          .smart		on
+          .autoimport	on
 ; ==============================================================================
 ; VGA_BUS AUDIO DEMO FOR Project65 (65C02 SBC)
 ; ==============================================================================
@@ -10,23 +13,21 @@
 ; 5. Ukončí se a vrátí řízení systému
 ; ==============================================================================
 
-.setcpu "65C02"
-
+.include "audio.inc65"
 ; Adresa spuštění programu (kompilace pro $3000)
 .org $3000
-
+SEI
 jmp start
 
 ; --- Import ROM rutin pro výpis na sériový port ---
+ROM_PUTC      = $FF09
 ROM_PRINTLN = $FF18
 ROM_PUTNL   = $FF15
 
 ; --- Dočasné proměnné v Zero Page ---
 tmp_duration = $60
-tmp_y        = $61
+tmp_y        = $60
 
-; --- Vložení audio ovladače ---
-.include "audio.inc"
 
 ; --- Textové zprávy ---
 msg_welcome: .byte "VGA_BUS Audio Demo - Project65", 13, 10, 0
@@ -36,6 +37,7 @@ msg_beep:    .byte "Prehravam systemove pipnuti (beep)...", 13, 10, 0
 msg_done:    .byte "Hotovo. Vracim rizeni.", 13, 10, 0
 msg_checkpoint: .byte "Checkpoint reached.", 13, 10, 0
 
+
 start:
     ; 1. Vytisknout uvítací zprávu
     LDA #<msg_welcome
@@ -44,45 +46,41 @@ start:
 
     ; 2. Inicializace zvukového čipu
     JSR audio_init
-    lda #<msg_checkpoint
-    ldx #>msg_checkpoint
-    JSR ROM_PRINTLN
+    lda #$41
+    JSR ROM_PUTC
     ; 3. Nastavení parametrů pro hlavní melodii (Kanál 0)
     ; Wave: Sinus, Hlasitost: 160, ADSR: Attack=okamžitý (F), Decay=krátký (4), Sustain=plný (F), Release=rychlý (4)
-    LDA #0              ; Kanál 0
+    LDA #$00              ; Kanál 0
     LDX #160            ; Hlasitost (max 255)
     JSR audio_set_vol
-    lda #<msg_checkpoint
-    ldx #>msg_checkpoint
-    JSR ROM_PRINTLN
+
+
+    lda #$41
+    JSR ROM_PUTC
     LDA #0
     LDX #$F4            ; Attack = F (okamžitý), Decay = 4 (krátký)
     LDY #$F4            ; Sustain = F (plný), Release = 4 (rychlý)
     JSR audio_set_adsr
-    lda #<msg_checkpoint
-    ldx #>msg_checkpoint
-    JSR ROM_PRINTLN
+    lda #$41
+    JSR ROM_PUTC
     ; Kontrolní registr: Sine (3) + ADSR povolit ($08) + Gate Note Off ($00) = $0B
     LDA #0
     LDX #(WAVE_SINE | ADSR_ON)
     JSR audio_set_ctrl
-    lda #<msg_checkpoint
-    ldx #>msg_checkpoint
-    JSR ROM_PRINTLN
+    lda #$41
+    JSR ROM_PUTC
     ; 4. Nastavení parametrů pro doprovodný bas (Kanál 1)
     ; Wave: Trojúhelník, Hlasitost: 120, ADSR vypnuto (flat zvuk)
     LDA #1              ; Kanál 1
     LDX #120            ; Hlasitost
     JSR audio_set_vol
-    lda #<msg_checkpoint
-    ldx #>msg_checkpoint
-    JSR ROM_PRINTLN
+    lda #$41
+    JSR ROM_PUTC
     LDA #1
     LDX #(WAVE_TRIANGLE | ADSR_OFF)
     JSR audio_set_ctrl
-    lda #<msg_checkpoint
-    ldx #>msg_checkpoint
-    JSR ROM_PRINTLN
+    lda #$41
+    JSR ROM_PUTC
     ; 5. Přehrání melodie (Óda na radost)
     LDA #<msg_playing
     LDX #>msg_playing
