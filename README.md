@@ -1,6 +1,6 @@
 # Project65 — SBC 65C02 IRQ BigBoard
 
-A fully custom **W65C02-based single-board computer** featuring an 8-priority-level IRQ subsystem, three ISA-8 expansion slots, a PS/2 keyboard interface, RS-232 serial port, and a complete firmware stack — including an interactive OS with a RAM-disk filesystem. Accompanied by a **full-featured Rust emulator** with a terminal UI.
+A fully custom **W65C02-based single-board computer** featuring an 8-priority-level IRQ subsystem, three ISA-8 expansion slots, a PS/2 keyboard interface, RS-232 serial port, and a complete firmware stack — including an interactive OS with a RAM-disk filesystem. Accompanied by a **full-featured Rust emulator** with a terminal UI and an **FPGA VGA + audio controller** (`APARTS_BUS`) for Intel MAX 10.
 
 ---
 
@@ -12,7 +12,8 @@ A fully custom **W65C02-based single-board computer** featuring an 8-priority-le
 - **Parallel I/O:** 2× W65C22S VIA controllers (keyboard polling + parallel port)
 - **PS/2 Keyboard:** ATtiny26 co-processor bridge
 - **Interrupt system:** 74HC148 priority encoder + 74HC574 latch — 8 prioritized IRQ lines + NMI
-- **Expansion:** 3× ISA-8 slots (TMS9918A video card, GameDuino graphics card)
+- **Expansion:** 3× ISA-8 slots (TMS9918A, GameDuino, APARTS_BUS FPGA card)
+- **FPGA video/audio:** `APARTS_BUS` — VGA 640×480, external SRAM framebuffer, font RAM, 4-ch DDS/ADSR → PCM5102A I²S
 - **Firmware:** Two build targets — minimal bootloader and full AppartusOS
 - **Emulator:** Rust TUI emulator (`p65emu`) with cycle-accurate peripherals
 
@@ -35,8 +36,20 @@ Project65/
 │   └── build_appartus.bat
 ├── emulator/           # Rust emulator (p65emu)
 │   └── src/            # cpu, bus, ram, rom, acia, via, irq_latch, tui
+├── aprts_vga/          # APARTS_BUS FPGA RTL (Verilog) + Quartus + sim
+│   ├── aprts_bus.v     # Top-level 6502 bus interface
+│   ├── vga_timing.v    # VGA 640×480 @ 60 Hz timing (25 MHz)
+│   ├── vga_video_gen.v # Graphics/text pixel path + font RAM
+│   ├── sram_controller.v
+│   ├── aprts_audio.v   # 4-ch DDS/ADSR + I²S (PCM5102A)
+│   ├── 10M02_test.qsf  # Quartus project (MAX 10 10M02SCE144C8G)
+│   └── sim/            # ModelSim / Icarus testbenches
+├── GAL/                # Glue logic (PLD)
 ├── tools/
-│   └── uploader.py     # Python/tkinter firmware uploader (COM or TCP)
+│   ├── uploader.py     # Python/tkinter firmware uploader (COM or TCP)
+│   ├── aprts_vga/      # 6502 demo for FPGA VGA
+│   ├── audio/          # Audio driver + samples (ca65)
+│   └── …               # hello, mem_mon, vera_test, vga_test, …
 └── CLAUDE.md           # Full hardware reference (address map, ICs, bugs)
 ```
 
@@ -69,6 +82,7 @@ Project65/
 | ---- | ----------- |
 | `EXP_TMS9918A_V1` | TMS9918A video card |
 | `EXP_GameDuino_V1` | GameDuino graphics card |
+| **APARTS_BUS** (`aprts_vga/`) | FPGA VGA 640×480 + external SRAM + 4-ch audio (MAX 10) |
 
 ---
 
@@ -82,7 +96,9 @@ $C400–$C7FF   IRQ latch                    read $C480–$C4FF / ack $C400–$C
 $C800–$CBFF   ACIA R6551
 $CC00–$CC7F   VIA1 (IC18) — keyboard/NMI
 $CC80–$CCFF   VIA2 (IC16) — parallel/IRQ1
-$CD00–$CFFF   ISA DEV0 / DEV1 / DEV2
+$CD00–$CDFF   ISA DEV0
+$CE00–$CEFF   ISA DEV1
+$CF00–$CFFF   ISA DEV2   ← typical APARTS_BUS decode (tools use $CF00 / $CE00)
 $D000–$DFFF   ISA extended
 $E000–$FFFF   EEPROM ROM (8 KB)
 ```
@@ -96,6 +112,119 @@ $E000–$FFFF   EEPROM ROM (8 KB)
 | 2–6 | IRQ2–6 | ISA slots |
 | 7 (lowest) | IRQ7 | Button S1 |
 | — | **NMI** | **VIA1 (IC18, `$CC00`)** |
+
+---
+
+## APARTS_BUS — FPGA VGA & Audio (`aprts_vga/`)
+
+RTL controller for the 6502/ISA bus: **VGA output**, **external SRAM framebuffer (up to 512 KB / 19-bit address)**, **internal font RAM**, and a **4-channel synthesizer** driving a **PCM5102A** over I²S.
+
+Detailed programmer manual: [`aprts_vga/README.md`](aprts_vga/README.md).
+
+### Target & RTL modules
+
+| Item | Value |
+| ---- | ----- |
+| FPGA | Intel **MAX 10** — `10M02SCE144C8G` |
+| Quartus project | `aprts_vga/10M02_test.qsf` |
+| Top entity | `aprts_bus` |
+| Pixel clock | **25 MHz** — VGA **640×480 @ 60 Hz** |
+
+| File | Module | Role |
+| ---- | ------ | ---- |
+| `aprts_bus.v` | `aprts_bus` | Top: 4-bit port decode, CPU R/W, submodule wiring |
+| `vga_timing.v` | `vga_timing` | H/V counters, HSYNC/VSYNC, `video_on` |
+| `vga_video_gen.v` | `vga_video_gen` | Graphics/text RGB, font RAM (128×8 = 1024 B), cursor blink |
+| `sram_controller.v` | `sram_controller` | CPU ↔ VGA arbiter, hardware clear engine |
+| `aprts_audio.v` | `aprts_audio` | 4-ch DDS + ADSR, I²S (`pcm_bck` / `pcm_din` / `pcm_lrck`) |
+
+### External interfaces (from `aprts_bus`)
+
+```text
+6502 bus:   n_reset, n_mem_w, n_mem_r, lv_cs, clk, lv_addr[3:0], lv_data[7:0]
+VGA:        red[2:0], green[2:0], blue[2:0], hsync, vsync
+SRAM:       sram_addr[18:0], sram_data[7:0], sram_ce_n, sram_oe_n, sram_we_n
+Audio I²S:  pcm_bck, pcm_din, pcm_lrck, pcm_sck
+```
+
+### Register map (ports `$0`–`$F` relative to card base)
+
+| Port | Write | Read |
+| ---- | ----- | ---- |
+| `$0` | Background color RGB332 | `reg_bg_color` |
+| `$1` | Address / cursor hi (`addr_hi`) | same |
+| `$2` | Address mid (`addr_mid`) | same |
+| `$3` | Address lo (`addr_lo`) | same |
+| `$4` | Data → SRAM / font / text cell | Data ← SRAM / font |
+| `$5` | Audio register index (`0x00`–`0x17`) | current index |
+| `$6` | Audio register data (index auto-inc) | selected audio reg |
+| `$D` | Mode | current mode |
+| `$F` | Start SRAM clear (any value) | status: bit0 = `addr_ready` |
+
+CPU SRAM pointer is 19-bit: `{addr_hi[2:0], addr_mid, addr_lo}`. After each write to port `$4` (except font mode `$0D`) the address **auto-increments**.
+
+**Background / pixel color:** `[7:5]` R, `[4:2]` G, `[1:0]` B (expanded to 3 bits in HW).
+
+### Mode register (`$D`)
+
+| Value | Behavior |
+| ----- | -------- |
+| `$00`–`$0C` | Graphics — linear framebuffer from external SRAM |
+| `$01` | Text 80×60, static cursor |
+| `$02` | Text 80×60, blinking cursor (~2 Hz) |
+| `$0D` | Font edit — R/W internal `font_mem` via port `$4` |
+| `$0E` | Hardware logic reset (counters, audio, registers) |
+| `$0F` | Blank screen (force black) |
+
+Text buffer uses the first **4800** bytes of SRAM (`80×60`, `$0000`–`$12BF`). Font RAM: **128 characters × 8 rows**.
+
+### SRAM clear & status (`$F`)
+
+- **Write:** starts hardware fill of external SRAM with zeros (clear range through `$4AFFF` in RTL).
+- **Read bit 0 (`addr_ready`):** `1` = ready for CPU access; `0` = clear/write busy. Poll before further writes.
+
+### Audio (ports `$5` / `$6`)
+
+Four independent DDS channels mixed to I²S (PCM5102A). Sample rate in driver notes: **~48.828 kHz**.
+
+Per channel (base offsets for ch0; +3 per channel for ch1–3):
+
+| Index | Register |
+| ----- | -------- |
+| `+0` / `+1` | Frequency lo / hi |
+| `+2` | Volume |
+| `$0C`–`$0F` | Control: wave `[2:0]`, ADSR enable `[3]`, gate/note-on `[4]` |
+| `$10`–`$17` | ADSR Attack/Decay and Sustain/Release pairs |
+
+Waveforms: `0` square, `1` triangle, `2` saw, `3` sine, `4` trapezoid. Writing `$6` auto-increments the audio index.
+
+### Simulation (`aprts_vga/sim/`)
+
+| File | Purpose |
+| ---- | ------- |
+| `tb_aprts_bus.v` | Integration test of full `aprts_bus` |
+| `tb_vga_timing.v` | VGA timing unit test |
+| `tb_aprts_audio.v` | Audio registers + I²S clocks |
+| `sram_model.v` | Behavioral 512 KB SRAM |
+| `run_msim.bat` / `run_msim.do` | ModelSim / Questa-Intel |
+| `run_iverilog.bat` | Icarus Verilog |
+
+```bat
+cd aprts_vga\sim
+run_msim.bat
+rem or: run_iverilog.bat
+```
+
+See [`aprts_vga/sim/README.md`](aprts_vga/sim/README.md).
+
+### Host-side tools
+
+| Path | Description |
+| ---- | ----------- |
+| `tools/aprts_vga/` | ca65 demo (`demo.asm`) — base often `$CF00` |
+| `tools/audio/` | Audio includes (`audio.inc65`) and samples — ports `$5`/`$6` on card base |
+
+Exact ISA slot base (`$CD00` / `$CE00` / `$CF00`) depends on which DEV chip-select the card is wired to.
 
 ---
 
@@ -249,6 +378,17 @@ pip install pyserial
 | `m` | Enter EWOZ / WozMon monitor |
 | `^R` (`$12`) | Soft-restart bootloader |
 
+### Other tools
+
+| Path | Description |
+| ---- | ----------- |
+| `tools/aprts_vga/` | APARTS_BUS VGA demo for AppartusOS |
+| `tools/audio/` | 4-channel FPGA audio driver and samples |
+| `tools/hello/` | Sample user program |
+| `tools/ihex_gen.py` | Intel HEX helper |
+| `tools/espi_update_fpga.py` | FPGA update helper |
+| `tools/vera_test/`, `tools/vga_test/` | Video experiments |
+
 ---
 
 ## Typical Workflow
@@ -268,6 +408,13 @@ cargo run --manifest-path emulator/Cargo.toml -- Firmware/output/APPARTUS_OS.bin
 > SAVE HELLO 6090 0100
 > DIR
 > RUN HELLO
+```
+
+FPGA RTL / sim workflow:
+
+```bat
+cd aprts_vga\sim
+run_msim.bat
 ```
 
 ---
@@ -294,8 +441,11 @@ All critical hardware bugs have been resolved.
 | `Eagle/SBC_65C02_IRQ_BigBoard_v9-1-3.brd` | Main PCB layout (Eagle) |
 | `Eagle/EXP_TMS9918A_V1.sch/.brd` | TMS9918A ISA video card |
 | `Eagle/EXP_GameDuino_V1.sch/.brd` | GameDuino ISA graphics card |
+| `aprts_vga/*.v` | APARTS_BUS FPGA RTL (VGA + SRAM + audio) |
+| `aprts_vga/10M02_test.qsf` | Quartus pinout / project for MAX 10 |
 
-Full hardware documentation (address decoding logic, IC cross-reference, IRQ system) is in [`CLAUDE.md`](CLAUDE.md).
+Full hardware documentation (address decoding logic, IC cross-reference, IRQ system) is in [`CLAUDE.md`](CLAUDE.md).  
+FPGA register-level docs: [`aprts_vga/README.md`](aprts_vga/README.md).
 
 ---
 
